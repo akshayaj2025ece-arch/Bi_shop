@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Do not use "standalone" on Vercel; Vercel handles serverless function packaging natively.
+  // Using "standalone" on Vercel causes ENOENT: no such file or directory, open '.next/next-server.js.nft.json'
+  output: process.env.VERCEL ? undefined : "standalone",
   /* ── Package Import Optimization for Lucide & Framer Motion ── */
   experimental: {
     optimizePackageImports: ["lucide-react", "framer-motion", "chart.js", "react-chartjs-2"],

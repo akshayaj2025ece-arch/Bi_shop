@@ -118,7 +118,7 @@ export default function AnalyticsPage() {
       // Build query for orders (authoritative single source of truth)
       let ordersQuery = supabase
         .from("orders")
-        .select("id, total, grand_total, status, payment_status, payment_method, created_at")
+        .select("id, grand_total, subtotal, status, payment_status, payment_method, created_at")
         .eq("shop_id", shop.id);
 
       if (startDate) {
@@ -159,11 +159,11 @@ export default function AnalyticsPage() {
 
       // Fetch order items strictly scoped to this shop's confirmed order IDs
       const confirmedOrderIds = confirmedOrders.map((o: any) => o.id);
-      let orderItems: { name: string; quantity: number; total: number }[] = [];
+      let orderItems: any[] = [];
       if (confirmedOrderIds.length > 0) {
         const { data: itemData } = await supabase
           .from("order_items")
-          .select("name, quantity, total")
+          .select("product_name, quantity, line_total")
           .in("order_id", confirmedOrderIds)
           .limit(1000);
         orderItems = itemData || [];
@@ -171,7 +171,7 @@ export default function AnalyticsPage() {
 
       // ── Compute Primary Metrics ──
       const totalRevenue = confirmedOrders.reduce(
-        (s: number, o: any) => s + (o.total ?? o.grand_total ?? 0),
+        (s: number, o: any) => s + Number(o.grand_total ?? o.subtotal ?? 0),
         0
       );
       const totalOrders = confirmedOrders.length;
@@ -220,11 +220,13 @@ export default function AnalyticsPage() {
 
       // ── Top Selling Items ──
       const itemMap = new Map<string, { quantity: number; revenue: number }>();
-      orderItems.forEach((item) => {
-        const ex = itemMap.get(item.name) || { quantity: 0, revenue: 0 };
-        ex.quantity += item.quantity;
-        ex.revenue += item.total;
-        itemMap.set(item.name, ex);
+      orderItems.forEach((item: any) => {
+        const itemName = item.product_name || item.name || "Item";
+        const itemRevenue = Number(item.line_total ?? item.total ?? 0);
+        const ex = itemMap.get(itemName) || { quantity: 0, revenue: 0 };
+        ex.quantity += Number(item.quantity) || 0;
+        ex.revenue += itemRevenue;
+        itemMap.set(itemName, ex);
       });
       const topItems = Array.from(itemMap.entries())
         .map(([name, d]) => ({ name, ...d }))
@@ -237,7 +239,7 @@ export default function AnalyticsPage() {
         const method = o.payment_method || "pay_at_counter";
         const ex = paymentMap.get(method) || { count: 0, total: 0 };
         ex.count += 1;
-        ex.total += o.total ?? o.grand_total ?? 0;
+        ex.total += Number(o.grand_total ?? o.subtotal ?? 0);
         paymentMap.set(method, ex);
       });
       const paymentBreakdown = Array.from(paymentMap.entries())

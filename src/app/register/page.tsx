@@ -162,11 +162,11 @@ export default function RegisterPage() {
             className="inline-flex items-center justify-center mb-4"
           >
             <Image
-              src="/bishop-logo.webp"
+              src="/bishop-logo.svg"
               alt="BISHOP"
-              width={56}
+              width={160}
               height={56}
-              className="h-14 w-auto object-contain drop-shadow-xs"
+              className="h-14 sm:h-16 w-auto object-contain drop-shadow-xs"
               priority
             />
           </motion.div>

@@ -1,12 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateOtpCode } from "@/lib/auth/otpStore";
-import { sendBishopOtpEmail } from "@/lib/auth/emailService";
+import { createClient } from "@supabase/supabase-js";
+import { generateOtpCodeAsync, sendBishopOtpEmail } from "@/server/auth";
+import { checkRateLimit, getClientIp, RATE_LIMIT_PRESETS } from "@/server/common/rate-limiter";
 
 // Rate limiting store for OTP requests (key: email, value: timestamp ms)
 const otpRequestStore = new Map<string, number>();
 
 export async function POST(req: NextRequest) {
   try {
+    const clientIp = getClientIp(req);
+    const ipLimit = checkRateLimit(`forgot_pw_${clientIp}`, RATE_LIMIT_PRESETS.otp);
+    if (!ipLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many password reset requests. Please wait a minute." },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(ipLimit.resetSeconds),
+            "X-RateLimit-Limit": String(ipLimit.limit),
+            "X-RateLimit-Remaining": "0",
+          },
+        }
+      );
+    }
+
     const body = await req.json();
     const { email } = body;
 
@@ -35,21 +52,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Generate cryptographically secure 6-digit numeric OTP code
-    const otpCode = generateOtpCode(cleanEmail);
     otpRequestStore.set(cleanEmail, now);
 
-    // 3. Dispatch BISHOP-branded verification email containing strictly the 6-digit code (NO LINKS)
-    const emailResult = await sendBishopOtpEmail({
-      to: cleanEmail,
-      otpCode,
-    });
+    // 2. Dispatch password recovery OTP via Supabase Auth API
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
-    if (!emailResult.success) {
-      console.warn("sendBishopOtpEmail warning:", emailResult.error);
+    if (supabaseUrl && anonKey) {
+      try {
+        const authClient = createClient(supabaseUrl, anonKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+        const { error: resetErr } = await authClient.auth.resetPasswordForEmail(cleanEmail);
+        if (resetErr) {
+          console.warn("Supabase resetPasswordForEmail note:", resetErr.message);
+        }
+      } catch (supaErr) {
+        console.warn("Supabase resetPasswordForEmail warning:", supaErr);
+      }
     }
 
-    // 4. Return generic success message to prevent email enumeration
+    // 3. Generate secure OTP for verified local fallback resilience
+    const otpCode = await generateOtpCodeAsync(cleanEmail);
+
+    // 4. Dispatch verification email if SMTP is configured
+    try {
+      await sendBishopOtpEmail({
+        to: cleanEmail,
+        otpCode,
+      });
+    } catch (mailErr) {
+      console.warn("sendBishopOtpEmail warning:", mailErr);
+    }
+
+    // 5. Return generic success message to prevent email enumeration
     return NextResponse.json({
       success: true,
       message: "If an account with that email exists, a password verification code has been sent.",

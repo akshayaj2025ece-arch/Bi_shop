@@ -30,6 +30,13 @@ export const metadata: Metadata = {
     "inventory management",
   ],
   authors: [{ name: "BISHOP" }],
+  icons: {
+    icon: [
+      { url: "/bishop-icon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/bishop-icon.svg",
+    apple: "/bishop-icon.svg",
+  },
 };
 
 export const viewport: Viewport = {

@@ -18,35 +18,52 @@ export async function saveCustomerProfileToSupabase(
       return false;
     }
 
+    // Check existing profile role before overriding role
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const currentRole = existingProfile?.role;
+    const isPrivileged = currentRole === "shopkeeper" || currentRole === "employee";
+
     // 1. Update Supabase Auth user_metadata
+    // Store customer_profile data without corrupting the shopkeeper's or employee's primary identity
+    const metaPayload: Record<string, any> = {
+      customer_profile: profile,
+    };
+    if (!isPrivileged) {
+      metaPayload.role = "customer";
+      metaPayload.full_name = profile.name;
+    }
+
     const { error: metaError } = await supabase.auth.updateUser({
-      data: {
-        role: "customer",
-        full_name: profile.name,
-        customer_profile: profile,
-      },
+      data: metaPayload,
     });
 
     if (metaError) {
       console.warn("[BISHOP Customer] Warning updating auth user_metadata:", metaError);
     }
 
-    // 2. Upsert into profiles table
-    const profilePayload = {
-      id: user.id,
-      email: user.email || "",
-      full_name: profile.name,
-      phone: profile.phone || null,
-      role: "customer",
-      updated_at: new Date().toISOString(),
-    };
+    // 2. Only modify the public profiles table if the user is a standard customer
+    if (!isPrivileged) {
+      const profilePayload = {
+        id: user.id,
+        email: user.email || "",
+        full_name: profile.name,
+        phone: profile.phone || null,
+        role: "customer",
+        updated_at: new Date().toISOString(),
+      };
 
-    const { error: dbError } = await supabase
-      .from("profiles")
-      .upsert(profilePayload);
+      const { error: dbError } = await supabase
+        .from("profiles")
+        .upsert(profilePayload);
 
-    if (dbError) {
-      console.warn("[BISHOP Customer] Warning upserting profile in database:", dbError);
+      if (dbError) {
+        console.warn("[BISHOP Customer] Warning upserting profile in database:", dbError);
+      }
     }
 
     console.log("[BISHOP Customer] Profile linked and saved for Supabase User ID:", user.id);

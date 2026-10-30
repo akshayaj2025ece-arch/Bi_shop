@@ -4,7 +4,7 @@ export const DASHBOARD_TRANSLATIONS = {
       dashboard: "Dashboard",
       orders: "Orders",
       menu: "Menu",
-      inventory: "Items",
+      inventory: "Inventory",
       employees: "Employees",
       tasks: "Tasks",
       analytics: "Analytics",

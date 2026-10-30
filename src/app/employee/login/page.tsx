@@ -83,6 +83,7 @@ export default function EmployeeLoginPage() {
         role: data.employee.role,
         shop_id: data.employee.shop_id,
         shop_name: data.employee.shop_name,
+        token: data.employee.token || data.token,
       });
 
       toast.success(isTa ? `வரவேற்கிறோம் ${data.employee.full_name}!` : `Welcome, ${data.employee.full_name}!`);
@@ -143,9 +144,9 @@ export default function EmployeeLoginPage() {
             className="inline-flex items-center justify-center mb-3"
           >
             <Image
-              src="/bishop-logo.webp"
+              src="/bishop-logo.svg"
               alt="BISHOP"
-              width={56}
+              width={160}
               height={56}
               className="h-12 sm:h-14 w-auto object-contain drop-shadow-xs"
               priority

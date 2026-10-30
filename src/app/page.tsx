@@ -263,10 +263,10 @@ export default function HomePage() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5 group">
             <Image
-              src="/bishop-logo.webp"
+              src="/bishop-logo.svg"
               alt="BISHOP"
-              width={36}
-              height={36}
+              width={140}
+              height={40}
               className="h-9 w-auto object-contain group-hover:scale-105 transition-transform"
               priority
             />
@@ -334,7 +334,7 @@ export default function HomePage() {
                 className="motion-reduce:animate-none motion-reduce:transform-none"
               >
                 <Image
-                  src="/bishop-logo.webp"
+                  src="/bishop-icon.svg"
                   alt="BISHOP"
                   width={80}
                   height={80}
@@ -538,7 +538,7 @@ export default function HomePage() {
                 >
                   <div className="flex items-center justify-center bg-white/95 backdrop-blur-md p-2 rounded-full shadow-lg shadow-mint-500/25 border border-mint-300">
                     <Image
-                      src="/bishop-logo.webp"
+                      src="/bishop-icon.svg"
                       alt="BISHOP"
                       width={28}
                       height={28}
@@ -609,7 +609,7 @@ export default function HomePage() {
                 >
                   <div className="flex items-center justify-center bg-white/95 backdrop-blur-md p-1.5 rounded-full shadow-md shadow-mint-500/25 border border-mint-300">
                     <Image
-                      src="/bishop-logo.webp"
+                      src="/bishop-icon.svg"
                       alt="BISHOP"
                       width={22}
                       height={22}
@@ -703,10 +703,10 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
           <div className="flex items-center justify-center mb-3">
             <Image
-              src="/bishop-logo.webp"
+              src="/bishop-logo.svg"
               alt="BISHOP"
-              width={28}
-              height={28}
+              width={120}
+              height={32}
               className="h-7 w-auto object-contain"
             />
           </div>

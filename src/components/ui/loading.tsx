@@ -34,19 +34,16 @@ export function LoadingScreen({
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", stiffness: 200, damping: 20 }}
-          className="flex items-center gap-3"
+          className="inline-flex items-center justify-center mb-2"
         >
           <Image
-            src="/bishop-logo.webp"
+            src="/bishop-logo.svg"
             alt="BISHOP"
-            width={48}
-            height={48}
-            className="h-12 w-auto object-contain drop-shadow-sm"
+            width={180}
+            height={60}
+            className="h-14 sm:h-16 w-auto object-contain drop-shadow-sm"
             priority
           />
-          <span className="text-2xl font-black text-emerald-600 tracking-tight">
-            BISHOP
-          </span>
         </motion.div>
 
         {/* Spinner */}

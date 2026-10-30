@@ -9,6 +9,7 @@ export interface EmployeeSession {
   role: string;
   shop_id: string;
   shop_name: string;
+  token?: string;
 }
 
 interface EmployeeStoreState {

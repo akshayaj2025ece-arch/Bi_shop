@@ -3,6 +3,7 @@
 // ============================================
 
 import type { UserRole, OrderStatus, PaymentMethod } from "./constants";
+export type { UserRole, OrderStatus, PaymentMethod };
 
 /**
  * User profile stored in the `profiles` table.
@@ -109,8 +110,9 @@ export interface Order {
   status: OrderStatus;
   items: OrderItem[];
   subtotal: number;
-  tax: number;
-  total: number;
+  tax?: number;
+  gst_amount?: number;
+  total?: number;
   grand_total?: number;
   advance_amount?: number;
   remaining_amount?: number;
@@ -229,9 +231,13 @@ export interface AppNotification {
 export interface AuthState {
   user: Profile | null;
   shop: Shop | null;
+  shops: Shop[];
+  isAllShops: boolean;
   isLoading: boolean;
   setUser: (user: Profile | null) => void;
   setShop: (shop: Shop | null) => void;
+  setShops: (shops: Shop[]) => void;
+  setIsAllShops: (isAllShops: boolean) => void;
   setLoading: (loading: boolean) => void;
   reset: () => void;
 }

@@ -397,7 +397,7 @@ export default function EmployeeDashboardPage() {
           <div className="flex items-center gap-3">
             <Link href="/employee" className="flex items-center gap-2">
               <Image
-                src="/bishop-logo.webp"
+                src="/bishop-icon.svg"
                 alt="BISHOP"
                 width={36}
                 height={36}
@@ -528,7 +528,12 @@ export default function EmployeeDashboardPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
+              onClick={async () => {
+                try {
+                  await fetch("/api/employee/logout", { method: "POST" });
+                } catch (e) {
+                  // Continue logout even if API call fails
+                }
                 logoutEmployee();
                 toast.success("Logged out of employee portal");
                 router.push("/select-role");

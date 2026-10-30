@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -178,8 +179,12 @@ export default function PaymentCustomerPage({
       name: shopName,
       description: `Takeaway Order Payment`,
       handler: async function (response: any) {
-        toast.success(`Payment Successful! Payment ID: ${response.razorpay_payment_id}`);
-        await recordOrder("paid", "razorpay");
+        toast.info("Payment authorized! Verifying on server...");
+        await recordOrder("pending", "razorpay", {
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_order_id: response.razorpay_order_id,
+          razorpay_signature: response.razorpay_signature,
+        });
       },
       prefill: {
         name: customerName,
@@ -201,7 +206,15 @@ export default function PaymentCustomerPage({
     }
   }
 
-  async function recordOrder(status: "paid" | "pending", method: string) {
+  async function recordOrder(
+    status: "paid" | "pending",
+    method: string,
+    paymentDetails?: {
+      razorpay_payment_id: string;
+      razorpay_order_id?: string;
+      razorpay_signature?: string;
+    }
+  ) {
     if (!customerName.trim()) {
       toast.error(menuT.nameRequiredError || "Please enter your Name before proceeding.");
       return;
@@ -228,7 +241,7 @@ export default function PaymentCustomerPage({
     const isPreOrder = method === "cash" || method === "pre_order";
     const advanceAmount = isPreOrder ? Number((computedTotal * 0.5).toFixed(2)) : computedTotal;
     const remainingAmount = isPreOrder ? Number((computedTotal - advanceAmount).toFixed(2)) : 0;
-    const finalPaymentStatus = isPreOrder ? "partially_paid" : status;
+    let finalPaymentStatus: "paid" | "pending" | "partially_paid" = isPreOrder ? "partially_paid" : "pending";
     const finalPaymentMethod = isPreOrder ? "pre_order" : method;
 
     try {
@@ -260,86 +273,49 @@ export default function PaymentCustomerPage({
       }
 
       let finalOrderNumber = tokenNumber;
+      let targetOrderId: string | null = null;
 
       if (cartItems.length > 0) {
-        const numericToken = Number(tokenNumber.replace(/\D/g, "")) || Math.floor(10000 + Math.random() * 90000);
-        const generatedOrderId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `ord_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-        let createdOrderId: string = generatedOrderId;
-        finalOrderNumber = `BSH-${numericToken}`;
-
-        // Direct insert to ensure all pre-order columns (advance_amount, remaining_amount, is_pre_order) are recorded
-        const { error: directErr } = await supabase
-          .from("orders")
-          .insert({
-            id: generatedOrderId,
-            shop_id: shop.id,
-            order_number: orderNum,
-            token_number: numericToken,
-            customer_name: customerName.trim(),
-            customer_phone: customerPhone.trim() || null,
-            table_number: "Takeaway",
+        // Submit via server-authoritative API route which enforces DB pricing and secure stock deduction
+        const apiRes = await fetch("/api/orders/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shopId: shop.id,
+            customerName: customerName.trim(),
+            customerPhone: customerPhone.trim() || null,
+            orderNotes: isPreOrder
+              ? `Pre-Order 50% Advance (Paid ${formatCurrency(advanceAmount)}, Remaining ${formatCurrency(remainingAmount)})`
+              : `Takeaway Payment via ${method.toUpperCase()}`,
+            cart: cartItems.map((item) => ({
+              menu_item_id: item.menu_item_id,
+              name: item.name,
+              price: item.price,
+              quantity: item.quantity,
+              notes: item.notes || null,
+            })),
             subtotal: computedSubtotal,
             tax: computedTax,
             total: computedTotal,
-            grand_total: computedTotal,
-            advance_amount: advanceAmount,
-            remaining_amount: remainingAmount,
-            is_pre_order: isPreOrder,
-            payment_method: finalPaymentMethod,
-            payment_status: finalPaymentStatus,
-            notes: isPreOrder
-              ? `Pre-Order 50% Advance (Paid ${formatCurrency(advanceAmount)}, Remaining ${formatCurrency(remainingAmount)})`
-              : `Takeaway Payment via ${method.toUpperCase()}`,
-          });
-
-        if (directErr) throw directErr;
-
-        const itemInserts = cartItems.map((item) => ({
-          order_id: createdOrderId,
-          product_id: item.menu_item_id,
-          product_name: item.name,
-          unit_price: item.price,
-          quantity: item.quantity,
-          line_total: Number((item.price * item.quantity).toFixed(2)),
-          notes: item.notes?.trim() || null,
-        }));
-
-        await supabase.from("order_items").insert(itemInserts);
-
-        // Deduct inventory stock
-        const { data: latestInv } = await supabase
-          .from("inventory")
-          .select("*")
-          .eq("shop_id", shop.id);
-
-        const latestInvMap = new Map<string, { id: string; quantity: number }>();
-        (latestInv || []).forEach((inv: any) => {
-          if (inv.name) {
-            latestInvMap.set(inv.name.trim().toLowerCase(), { id: inv.id, quantity: inv.quantity ?? 0 });
-          }
+            paymentMethod: finalPaymentMethod,
+            paymentStatus: "pending",
+            advanceAmount,
+            remainingAmount,
+            isPreOrder,
+          }),
         });
 
-        for (const item of cartItems) {
-          const key = item.name.trim().toLowerCase();
-          if (latestInvMap.has(key)) {
-            const inv = latestInvMap.get(key)!;
-            const newQty = Math.max(0, inv.quantity - item.quantity);
+        const apiData = await apiRes.json();
+        if (!apiRes.ok || !apiData.success) {
+          throw new Error(apiData.error || "Failed to record verified order.");
+        }
 
-            await supabase
-              .from("inventory")
-              .update({ quantity: newQty, updated_at: new Date().toISOString() })
-              .eq("id", inv.id);
-
-            if (newQty === 0) {
-              await supabase
-                .from("menu_items")
-                .update({ is_available: false, updated_at: new Date().toISOString() })
-                .eq("id", item.menu_item_id);
-            }
-          }
+        targetOrderId = apiData.orderId || null;
+        if (apiData.tokenNumber) {
+          finalOrderNumber = apiData.tokenNumber;
         }
       } else {
-        // Direct payment record without menu items
+        // Direct payment record without menu items - strictly inserted in 'pending' status
         const { data: createdOrder, error: directErr } = await supabase
           .from("orders")
           .insert({
@@ -358,16 +334,45 @@ export default function PaymentCustomerPage({
             remaining_amount: remainingAmount,
             is_pre_order: isPreOrder,
             payment_method: finalPaymentMethod,
-            payment_status: finalPaymentStatus,
+            payment_status: "pending",
             notes: isPreOrder
               ? `Pre-Order 50% Advance (Paid ${formatCurrency(advanceAmount)}, Remaining ${formatCurrency(remainingAmount)})`
               : `Takeaway Payment via ${method.toUpperCase()}`,
           })
-          .select("token_number")
+          .select("id, token_number")
           .single();
 
         if (directErr) throw directErr;
+        targetOrderId = createdOrder?.id || null;
         if (createdOrder?.token_number) finalOrderNumber = createdOrder.token_number;
+      }
+
+      // If online payment via Razorpay, invoke server-side verification to settle payment
+      if (method === "razorpay" && paymentDetails?.razorpay_payment_id && targetOrderId) {
+        try {
+          const verifyRes = await fetch("/api/orders/verify-payment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: targetOrderId,
+              shopId: shop.id,
+              razorpay_payment_id: paymentDetails.razorpay_payment_id,
+              razorpay_order_id: paymentDetails.razorpay_order_id,
+              razorpay_signature: paymentDetails.razorpay_signature,
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          if (verifyRes.ok && verifyData.success) {
+            finalPaymentStatus = "paid";
+            toast.success("Payment verified and confirmed!");
+          } else {
+            console.warn("[PAYMENT-VERIFY] Verification pending:", verifyData.error);
+            toast.warning(verifyData.error || "Payment verification pending confirmation.");
+          }
+        } catch (vErr) {
+          console.warn("[PAYMENT-VERIFY] Verification API error:", vErr);
+          toast.warning("Payment verification in progress. Marked as pending confirmation.");
+        }
       }
 
       // Clear draft cart
@@ -615,9 +620,18 @@ export default function PaymentCustomerPage({
             <div className="border-b-2 border-dashed border-slate-300 my-2" />
 
             {/* Footer Message */}
-            <div className="text-center text-[10px] text-slate-500 space-y-0.5 pt-1">
+            <div className="text-center text-[10px] text-slate-500 space-y-1 pt-1">
               <p className="font-semibold text-slate-700">{t.thankYouMessage}</p>
-              <p className="text-[9px]">Powered by BISHOP POS</p>
+              <div className="flex items-center justify-center gap-1.5">
+                <Image
+                  src="/bishop-icon.svg"
+                  alt="BISHOP"
+                  width={14}
+                  height={14}
+                  className="h-3.5 w-3.5 object-contain"
+                />
+                <p className="text-[9px]">Powered by BISHOP POS</p>
+              </div>
             </div>
 
           </div>
@@ -668,8 +682,15 @@ export default function PaymentCustomerPage({
             >
               {lang === "en" ? "தமிழ்" : "English"}
             </Button>
-            <Badge variant="mint" className="text-xs uppercase tracking-wider font-bold">
-              BISHOP Pay
+            <Badge variant="mint" className="text-xs uppercase tracking-wider font-bold inline-flex items-center gap-1.5">
+              <Image
+                src="/bishop-icon.svg"
+                alt="BISHOP"
+                width={14}
+                height={14}
+                className="h-3.5 w-3.5 object-contain"
+              />
+              <span>BISHOP Pay</span>
             </Badge>
           </div>
         </div>

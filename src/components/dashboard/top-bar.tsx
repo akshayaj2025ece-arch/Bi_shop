@@ -20,6 +20,9 @@ import {
   Calendar,
   UserCheck,
   Phone,
+  ChevronDown,
+  Check,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -32,7 +35,7 @@ import { useLanguageStore } from "@/stores/language-store";
 import { DASHBOARD_TRANSLATIONS } from "@/lib/translations";
 import { formatCurrency } from "@/lib/utils";
 import { motion } from "framer-motion";
-import type { AppNotification, TaskStatus } from "@/lib/types";
+import type { AppNotification, TaskStatus, Shop } from "@/lib/types";
 import {
   fetchRecipientNotifications,
   markNotificationAsRead,
@@ -53,12 +56,16 @@ interface OrderNotificationItem {
 }
 
 export function TopBar({ onMenuClick }: TopBarProps) {
-  const { user, shop } = useAuthStore();
+  const { user, shop, shops, isAllShops, setShop, setIsAllShops } = useAuthStore();
   const router = useRouter();
   const { lang, toggleLang } = useLanguageStore();
   const t = DASHBOARD_TRANSLATIONS[lang || "en"];
   const topBarT = t.topBar;
 
+  const isShopkeeper = user?.role === "shopkeeper" || (user?.role !== "employee" && (shops?.length || 0) > 0);
+  const hasMultipleShops = isShopkeeper && (shops?.length || 0) > 1;
+
+  const [showShopSelector, setShowShopSelector] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -72,12 +79,56 @@ export function TopBar({ onMenuClick }: TopBarProps) {
   const [selectedTaskNotif, setSelectedTaskNotif] = useState<AppNotification | null>(null);
   const [isUpdatingTaskStatus, setIsUpdatingTaskStatus] = useState(false);
 
+  const shopSelectorRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Selection handlers
+  function handleSelectShop(selectedShop: Shop) {
+    const validShop = shops.find((s) => s.id === selectedShop.id);
+    if (!validShop) {
+      toast.error("Invalid shop selected");
+      return;
+    }
+
+    setShop(validShop);
+    setIsAllShops(false);
+    if (typeof window !== "undefined") {
+      try {
+        const userStorageKey = user?.id ? `bishop_active_shop_id_${user.id}` : "bishop_active_shop_id";
+        localStorage.setItem(userStorageKey, validShop.id);
+        localStorage.setItem("bishop_active_shop_id", validShop.id);
+      } catch {
+        // ignore storage errors
+      }
+    }
+    setShowShopSelector(false);
+  }
+
+  function handleSelectAllShops() {
+    setIsAllShops(true);
+    if (typeof window !== "undefined") {
+      try {
+        const userStorageKey = user?.id ? `bishop_active_shop_id_${user.id}` : "bishop_active_shop_id";
+        localStorage.setItem(userStorageKey, "all");
+        localStorage.setItem("bishop_active_shop_id", "all");
+      } catch {
+        // ignore storage errors
+      }
+    }
+    setShowShopSelector(false);
+    router.push("/dashboard");
+  }
 
   // Close dropdowns on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      if (
+        shopSelectorRef.current &&
+        !shopSelectorRef.current.contains(e.target as Node)
+      ) {
+        setShowShopSelector(false);
+      }
       if (
         notificationsRef.current &&
         !notificationsRef.current.contains(e.target as Node)
@@ -187,11 +238,37 @@ export function TopBar({ onMenuClick }: TopBarProps) {
   }, [shop?.id, user?.id]);
 
   async function handleLogout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    toast.success("Signed out successfully");
-    router.push("/login");
-    router.refresh();
+    // 1. Immediately purge in-memory state and localStorage to prevent cross-account leakage
+    useAuthStore.getState().reset();
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem("bishop_active_shop_id");
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (
+            key &&
+            (key.startsWith("bishop_active_shop_id") ||
+              key.startsWith("bishop_task_") ||
+              key.startsWith("bishop_notif_"))
+          ) {
+            localStorage.removeItem(key);
+          }
+        }
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      toast.success("Signed out successfully");
+    } catch (err) {
+      console.warn("Sign-out network error:", err);
+    } finally {
+      router.push("/login");
+      router.refresh();
+    }
   }
 
   // Handle Employee Task Status Update directly inside Notification Modal
@@ -254,13 +331,15 @@ export function TopBar({ onMenuClick }: TopBarProps) {
       <div className="flex items-center justify-between h-16 sm:h-20 px-3 sm:px-8">
         {/* Left: Menu + Brand Logo & Shop Name */}
         <div className="flex items-center gap-2.5 sm:gap-4">
-          <button
-            onClick={onMenuClick}
-            className="lg:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors touch-target flex items-center justify-center"
-            aria-label="Toggle menu"
-          >
-            <Menu className="h-6 w-6 sm:h-7 sm:w-7" />
-          </button>
+          {(!hasMultipleShops || !isAllShops) && (
+            <button
+              onClick={onMenuClick}
+              className="lg:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors touch-target flex items-center justify-center"
+              aria-label="Toggle menu"
+            >
+              <Menu className="h-6 w-6 sm:h-7 sm:w-7" />
+            </button>
+          )}
 
           <Link href="/dashboard" className="flex items-center gap-2.5 group">
             <div style={{ perspective: 1000 }} className="shrink-0">
@@ -284,7 +363,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                 className="motion-reduce:animate-none motion-reduce:transform-none shrink-0"
               >
                 <Image
-                  src="/bishop-logo.webp"
+                  src="/bishop-icon.svg"
                   alt="BISHOP"
                   width={36}
                   height={36}
@@ -297,7 +376,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
               className="text-lg sm:text-2xl font-black text-emerald-500 tracking-tight drop-shadow-xs truncate max-w-[200px] sm:max-w-xs group-hover:text-emerald-400 transition-colors"
               style={{ fontFamily: "'Arial Black', sans-serif" }}
             >
-              {shop?.name || "BISHOP"}
+              {isAllShops ? "All Shops" : (shop?.name || "BISHOP")}
             </span>
           </Link>
         </div>
@@ -315,11 +394,111 @@ export function TopBar({ onMenuClick }: TopBarProps) {
             <span className="font-bold">{lang === "en" ? "தமிழ்" : "English"}</span>
           </button>
 
+          {/* Shop Selector Dropdown (Shopkeepers with >=1 shop) */}
+          {isShopkeeper && (shops?.length || 0) >= 1 && (
+            <div className="relative" ref={shopSelectorRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowShopSelector((prev) => !prev);
+                  setShowNotifications(false);
+                  setShowUserMenu(false);
+                }}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2.5 rounded-2xl bg-white border-2 border-slate-100 text-slate-700 font-extrabold text-xs sm:text-sm shadow-sm hover:border-mint-300 hover:bg-mint-50/80 hover:shadow-md transition-all duration-300 touch-manipulation max-w-[130px] xs:max-w-[170px] sm:max-w-[220px]"
+                aria-label="Select Shop"
+                title={isAllShops ? "All Shops" : (shop?.name || "Select Shop")}
+              >
+                <Store className="h-4 w-4 sm:h-5 sm:w-5 text-mint-600 shrink-0" />
+                <span className="truncate">
+                  {isAllShops ? "All Shops" : (shop?.name || "Select Shop")}
+                </span>
+                <ChevronDown
+                  className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-400 shrink-0 transition-transform duration-200 ${
+                    showShopSelector ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              {showShopSelector && (
+                <div className="absolute right-0 mt-2 w-56 sm:w-64 bg-white rounded-2xl sm:rounded-3xl border border-slate-200 shadow-2xl p-2 z-50 animate-in fade-in-50 zoom-in-95 duration-150">
+                  <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Switch Shop
+                    </p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto space-y-1 pr-0.5">
+                    {/* All Shops Option (multi-shop only) */}
+                    {shops.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleSelectAllShops}
+                        className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
+                          isAllShops
+                            ? "bg-mint-50 text-mint-700 font-bold"
+                            : "text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <Building2
+                            className={`h-4 w-4 shrink-0 ${
+                              isAllShops ? "text-mint-600" : "text-slate-400"
+                            }`}
+                          />
+                          <span className="truncate">All Shops</span>
+                        </div>
+                        {isAllShops && <Check className="h-4 w-4 text-mint-600 shrink-0" />}
+                      </button>
+                    )}
+
+                    {/* Individual Registered Shops */}
+                    {shops.map((s) => {
+                      const isSelected = !isAllShops && shop?.id === s.id;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => handleSelectShop(s)}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
+                            isSelected
+                              ? "bg-mint-50 text-mint-700 font-bold"
+                              : "text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <Store
+                              className={`h-4 w-4 shrink-0 ${
+                                isSelected ? "text-mint-600" : "text-slate-400"
+                              }`}
+                            />
+                            <span className="truncate">{s.name}</span>
+                          </div>
+                          {isSelected && <Check className="h-4 w-4 text-mint-600 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Add Shop Action */}
+                  <div className="border-t border-slate-100 my-1.5" />
+                  <Link
+                    href="/shop/setup"
+                    onClick={() => setShowShopSelector(false)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-bold text-mint-700 hover:bg-mint-50/80 transition-colors"
+                  >
+                    <Plus className="h-4 w-4 text-mint-600 shrink-0" />
+                    <span>+ Add Shop</span>
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Notifications Dropdown */}
           <div className="relative" ref={notificationsRef}>
             <button
               onClick={() => {
                 setShowNotifications((prev) => !prev);
+                setShowShopSelector(false);
                 if (unreadCount > 0) setUnreadCount(0);
               }}
               className="relative p-2 sm:p-3.5 rounded-2xl bg-white border-2 border-slate-100 text-slate-600 shadow-sm hover:text-mint-600 hover:border-mint-300 hover:bg-mint-50/80 hover:shadow-lg transition-all duration-300 touch-manipulation"
@@ -457,7 +636,10 @@ export function TopBar({ onMenuClick }: TopBarProps) {
           {/* User Profile Menu */}
           <div className="relative" ref={userMenuRef}>
             <button
-              onClick={() => setShowUserMenu(!showUserMenu)}
+              onClick={() => {
+                setShowUserMenu(!showUserMenu);
+                setShowShopSelector(false);
+              }}
               className="group flex items-center gap-2 sm:gap-4 p-1 sm:p-2 pr-2.5 sm:pr-5 rounded-2xl sm:rounded-[20px] bg-white border-2 border-slate-50 hover:border-mint-200 shadow-sm hover:shadow-xl hover:shadow-mint-500/10 transition-all duration-300 touch-manipulation"
             >
               <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl sm:rounded-[14px] bg-gradient-to-br from-teal-500 via-mint-500 to-emerald-400 flex items-center justify-center text-white text-sm sm:text-[20px] font-black shadow-lg shadow-mint-500/40 ring-2 sm:ring-4 ring-white shrink-0">
@@ -470,7 +652,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                 <div className="flex items-center gap-2 mt-2">
                   <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.9)] animate-pulse" />
                   <p className="text-[12px] font-black text-emerald-600 uppercase tracking-[0.2em] leading-none">
-                    {user?.role === "shopkeeper"
+                    {isShopkeeper
                       ? t.common.shopkeeper
                       : user?.role === "employee"
                       ? "EMPLOYEE"

@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +29,7 @@ import {
 import type { Category, MenuItem, Shop } from "@/lib/types";
 import { formatCurrency, getItemEmoji } from "@/lib/utils";
 import { useLanguageStore } from "@/stores/language-store";
+import { DASHBOARD_TRANSLATIONS } from "@/lib/translations";
 import { captureBillScreenshot } from "@/lib/screenshot";
 
 interface MenuCustomerPageProps {
@@ -66,7 +69,7 @@ function buildMenuItem(item: MenuItem): CartItem {
     name: item.name,
     price: item.price,
     quantity: 1,
-    is_veg: item.is_veg,
+    is_veg: Boolean(item.is_veg),
     notes: "",
   };
 }
@@ -75,101 +78,40 @@ function createOrderNumber() {
   return `BISHOP-${Math.floor(Date.now() / 1000).toString().slice(-4)}-${Math.floor(Math.random() * 900 + 100)}`;
 }
 
-const MENU_TEXTS = {
-  en: {
-    menu: "Menu",
-    subheading: "Browse items and place your order directly from your table.",
-    online: "Online",
-    offline: "Offline mode",
-    cartTitle: "Your Cart",
-    emptyCart: "Your cart is empty. Tap 'Add' on items to start your order.",
-    customerDetails: "Order Details",
-    tableNumberLabel: "Table / Room Number *",
-    tableNumberPlaceholder: "e.g. Table 4 or Takeaway",
-    customerNameLabel: "Your Name",
-    customerNamePlaceholder: "John Doe",
-    customerPhoneLabel: "Phone Number (Optional)",
-    customerPhonePlaceholder: "+91 98765 43210",
-    orderNotesLabel: "Special Instructions",
-    orderNotesPlaceholder: "e.g. Less spicy, extra napkins...",
-    paymentMethod: "Payment Method",
-    subtotal: "Subtotal",
-    tax: "Tax",
-    total: "Total",
-    placeOrder: "Place Order",
-    placingOrder: "Placing order...",
-    orderPlacedTitle: "Order Confirmed!",
-    orderPlacedSubtitle: "Your order has been sent directly to the kitchen.",
-    orderNumber: "Order #",
-    table: "Table",
-    status: "Status",
-    statusPending: "Pending Kitchen Fulfillment",
-    placeAnother: "Place Another Order",
-    veg: "Veg",
-    nonVeg: "Non-Veg",
-    add: "Add",
-    remove: "Remove",
-    itemNote: "Note (e.g., less spicy)",
-  },
-  ta: {
-    menu: "மெனு",
-    subheading: "உணவுகளைத் தேர்ந்தெடுத்து உங்கள் மேஜையிலிருந்தே நேரடியாக ஆர்டர் செய்யுங்கள்.",
-    online: "இணையத்தில் உள்ளது",
-    offline: "ஆஃப்லைன் முறை",
-    cartTitle: "உங்கள் கூடை",
-    emptyCart: "உங்கள் கூடை காலியாக உள்ளது. உணவுகளைச் சேர்க்க 'Add' அழுத்தவும்.",
-    customerDetails: "ஆர்டர் விவரங்கள்",
-    tableNumberLabel: "மேஜை / அறை எண் *",
-    tableNumberPlaceholder: "எ.கா: மேஜை 4 அல்லது பார்சல்",
-    customerNameLabel: "உங்கள் பெயர்",
-    customerNamePlaceholder: "உங்கள் பெயர்",
-    customerPhoneLabel: "தொலைபேசி எண் (விருப்பத்தேர்வு)",
-    customerPhonePlaceholder: "+91 98765 43210",
-    orderNotesLabel: "சிறப்பு குறிப்புகள்",
-    orderNotesPlaceholder: "எ.கா: காரம் குறைவாக...",
-    paymentMethod: "பணம் செலுத்தும் முறை",
-    subtotal: "கூட்டுத்தொகை",
-    tax: "வரி",
-    total: "மொத்தம்",
-    placeOrder: "ஆர்டர் செய்",
-    placingOrder: "ஆர்டர் செய்யப்படுகிறது...",
-    orderPlacedTitle: "ஆர்டர் உறுதிசெய்யப்பட்டது!",
-    orderPlacedSubtitle: "உங்கள் ஆர்டர் சமையலறைக்கு அனுப்பப்பட்டது.",
-    orderNumber: "ஆர்டர் எண் #",
-    table: "மேஜை எண்",
-    status: "நிலை",
-    statusPending: "சமையலறையில் தயார் செய்யப்படுகிறது",
-    placeAnother: "மற்றொரு ஆர்டர் செய்ய",
-    veg: "சைவம்",
-    nonVeg: "அசைவம்",
-    add: "சேர்",
-    remove: "நீக்கு",
-    itemNote: "குறிப்பு (எ.கா: காரம் குறைவு)",
-  },
-};
-
-import { DASHBOARD_TRANSLATIONS } from "@/lib/translations";
-
 export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCustomerPageProps) {
+  const router = useRouter();
   const { lang, toggleLang } = useLanguageStore();
   const t = DASHBOARD_TRANSLATIONS[lang || "en"].customerMenuPage;
 
-  const [localCategories, setLocalCategories] = useState<Category[]>(categories);
-  const [localMenuItems, setLocalMenuItems] = useState<MenuItem[]>(menuItems);
+  const shopKey = shop?.id || shop?.slug || "default";
+
+  const [localCategories, setLocalCategories] = useState<Category[]>(categories || []);
+  const [localMenuItems, setLocalMenuItems] = useState<MenuItem[]>(menuItems || []);
 
   const [cart, setCart] = useState<CartItem[]>([]);
+  const isHydratedRef = useRef(false);
+
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [tableNumber, setTableNumber] = useState("");
   const [orderNotes, setOrderNotes] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "upi" | "card">("cash");
 
   const [isOnline, setIsOnline] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
   const [placedOrder, setPlacedOrder] = useState<PlacedOrderDetails | null>(null);
 
+  // Sync state if props change on navigation
+  useEffect(() => {
+    if (categories && categories.length > 0) {
+      setLocalCategories(categories);
+    }
+    if (menuItems && menuItems.length > 0) {
+      setLocalMenuItems(menuItems);
+    }
+  }, [categories, menuItems]);
+
   const fetchLatestData = useCallback(async () => {
+    if (!shop?.id) return;
     try {
       const supabase = createClient();
       const [categoriesRes, itemsRes, inventoryRes] = await Promise.all([
@@ -216,9 +158,10 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
     } catch (err) {
       console.error("Error syncing customer menu data:", err);
     }
-  }, [shop.id]);
+  }, [shop?.id]);
 
   useEffect(() => {
+    if (!shop?.id) return;
     const supabase = createClient();
 
     const channel = supabase
@@ -253,38 +196,68 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [shop.id, fetchLatestData]);
+  }, [shop?.id, fetchLatestData]);
 
+  // Group items by category and retain uncategorized items
   const groupedItems = useMemo(() => {
     const map = new Map<string, MenuItem[]>();
     localCategories.forEach((cat) => map.set(cat.id, []));
+    const uncategorized: MenuItem[] = [];
+
     localMenuItems.forEach((item) => {
       const bucket = map.get(item.category_id);
-      if (bucket) bucket.push(item);
+      if (bucket) {
+        bucket.push(item);
+      } else {
+        uncategorized.push(item);
+      }
     });
-    return localCategories.map((category) => ({ category, items: map.get(category.id) || [] }));
-  }, [localCategories, localMenuItems]);
+
+    const groups = localCategories.map((category) => ({
+      category,
+      items: map.get(category.id) || [],
+    }));
+
+    if (uncategorized.length > 0) {
+      groups.push({
+        category: {
+          id: "uncategorized",
+          shop_id: shop?.id || "",
+          name: t.categoryAll || "Special Selections",
+          description: "Fresh items available today",
+          sort_order: 9999,
+          is_active: true,
+          created_at: new Date().toISOString(),
+        } as Category,
+        items: uncategorized,
+      });
+    }
+
+    return groups;
+  }, [localCategories, localMenuItems, shop?.id, t.categoryAll]);
 
   const subtotal = useMemo(
-    () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    () => Number(cart.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)),
     [cart]
   );
 
-  const taxRate = shop.tax_rate || 0;
+  const taxRate = shop?.tax_rate || 0;
   const tax = useMemo(() => Number((subtotal * (taxRate / 100)).toFixed(2)), [subtotal, taxRate]);
   const total = useMemo(() => Number((subtotal + tax).toFixed(2)), [subtotal, tax]);
 
+  // Restore cart on mount safely
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const storedCart = window.localStorage.getItem(`${CART_STORAGE_KEY}_${shop.slug}`);
-    if (storedCart) {
-      try {
+    try {
+      const storedCart = window.localStorage.getItem(`${CART_STORAGE_KEY}_${shopKey}`);
+      if (storedCart) {
         setCart(JSON.parse(storedCart));
-      } catch {
-        setCart([]);
       }
+    } catch {
+      setCart([]);
     }
+    isHydratedRef.current = true;
 
     const checkOnline = () => {
       setIsOnline(window.navigator.onLine);
@@ -298,12 +271,17 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
       window.removeEventListener("online", checkOnline);
       window.removeEventListener("offline", checkOnline);
     };
-  }, [shop.slug]);
+  }, [shopKey]);
 
+  // Save cart changes to localStorage after hydration
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(`${CART_STORAGE_KEY}_${shop.slug}`, JSON.stringify(cart));
-  }, [cart, shop.slug]);
+    if (typeof window === "undefined" || !isHydratedRef.current) return;
+    try {
+      window.localStorage.setItem(`${CART_STORAGE_KEY}_${shopKey}`, JSON.stringify(cart));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [cart, shopKey]);
 
   function addToCart(item: MenuItem) {
     const availQty = item.quantity ?? 10;
@@ -312,13 +290,16 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
       return;
     }
 
+    const existing = cart.find((entry) => entry.menu_item_id === item.id);
+    if (existing && existing.quantity >= availQty) {
+      toast.error(`Cannot add more. Only ${availQty} in stock.`);
+      return;
+    }
+
     setCart((prev) => {
-      const existing = prev.find((entry) => entry.menu_item_id === item.id);
-      if (existing) {
-        if (existing.quantity >= availQty) {
-          toast.error(`Cannot add more. Only ${availQty} in stock.`);
-          return prev;
-        }
+      const ex = prev.find((entry) => entry.menu_item_id === item.id);
+      if (ex) {
+        if (ex.quantity >= availQty) return prev;
         return prev.map((entry) =>
           entry.menu_item_id === item.id
             ? { ...entry, quantity: entry.quantity + 1 }
@@ -334,6 +315,13 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
   function updateQuantity(itemId: string, value: number) {
     if (value < 1) {
       setCart((prev) => prev.filter((item) => item.menu_item_id !== itemId));
+      return;
+    }
+
+    const menuItem = localMenuItems.find((m) => m.id === itemId);
+    const availQty = menuItem?.quantity ?? 10;
+    if (value > availQty) {
+      toast.error(`Only ${availQty} available in stock.`);
       return;
     }
 
@@ -358,38 +346,47 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
 
   function handlePayNow() {
     if (!cart.length) {
-      toast.error("Add items to your cart first.");
+      toast.error(t.emptyCart || "Add items to your cart first.");
       return;
     }
 
     if (!customerName.trim()) {
       toast.error(t.nameRequiredError || "Please enter your Name before proceeding.");
+      const el = document.getElementById("customer-order-form");
+      if (el) el.scrollIntoView({ behavior: "smooth" });
       return;
     }
 
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(`bishop_checkout_${shop.id}`, JSON.stringify({
-        cart,
-        tableNumber: "Takeaway",
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
-        orderNotes: orderNotes.trim(),
-        subtotal,
-        tax,
-        total,
-      }));
-      window.location.href = `/pay/${shop.id}?amount=${total}&table=Takeaway`;
+      try {
+        window.localStorage.setItem(`bishop_checkout_${shop.id}`, JSON.stringify({
+          cart,
+          tableNumber: "Takeaway",
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim(),
+          orderNotes: orderNotes.trim(),
+          subtotal,
+          tax,
+          total,
+        }));
+      } catch {
+        // ignore storage error
+      }
+
+      router.push(`/pay/${shop.id}?amount=${total}&table=Takeaway`);
     }
   }
 
   async function submitOrder() {
     if (!cart.length) {
-      toast.error("Add items to your cart first.");
+      toast.error(t.emptyCart || "Add items to your cart first.");
       return;
     }
 
     if (!customerName.trim()) {
-      toast.error("Please enter your name.");
+      toast.error(t.nameRequiredError || "Please enter your Name before proceeding.");
+      const el = document.getElementById("customer-order-form");
+      if (el) el.scrollIntoView({ behavior: "smooth" });
       return;
     }
 
@@ -407,7 +404,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
         .eq("shop_id", shop.id);
 
       if (invErr) {
-        console.error("Inventory fetch pre-validation error:", invErr?.message, invErr?.code, invErr?.details, invErr?.hint);
+        console.error("Inventory fetch pre-validation error:", invErr?.message);
       }
 
       const invMap = new Map<string, { id: string; quantity: number }>();
@@ -432,21 +429,6 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
       const numericToken = Number(tokenNumber.replace(/\D/g, "")) || Math.floor(10000 + Math.random() * 90000);
       const generatedOrderId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `ord_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-      // Safe request payload logging (no secrets or sensitive tokens)
-      const safePayload = {
-        orderId: generatedOrderId,
-        shopId: shop.id,
-        orderNumber,
-        numericToken,
-        customerName: customerName.trim(),
-        tableNumber: "Takeaway",
-        subtotal,
-        tax,
-        total,
-        itemCount: currentCart.length,
-      };
-      console.log("Safe Order Submission Request Payload:", safePayload);
-
       const orderPayload = {
         id: generatedOrderId,
         shop_id: shop.id,
@@ -455,11 +437,13 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim() || null,
         table_number: "Takeaway",
-        status: "preparing",
+        status: "pending",
         subtotal,
+        tax,
         gst_amount: tax,
+        total,
         grand_total: total,
-        payment_method: "pay_at_counter",
+        payment_method: "cash",
         payment_status: "pending",
         notes: orderNotes.trim() || "Takeaway Cash Order",
       };
@@ -473,11 +457,12 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
         notes: item.notes?.trim() || null,
       }));
 
+      // Offline order handling
       if (!isOnline) {
-        const existingQueue = window.localStorage.getItem(`${OFFLINE_ORDER_QUEUE_KEY}_${shop.slug}`);
+        const existingQueue = window.localStorage.getItem(`${OFFLINE_ORDER_QUEUE_KEY}_${shopKey}`);
         const queued = existingQueue ? JSON.parse(existingQueue) : [];
         queued.push({ order: orderPayload, items: orderItems });
-        window.localStorage.setItem(`${OFFLINE_ORDER_QUEUE_KEY}_${shop.slug}`, JSON.stringify(queued));
+        window.localStorage.setItem(`${OFFLINE_ORDER_QUEUE_KEY}_${shopKey}`, JSON.stringify(queued));
 
         setPlacedOrder({
           orderNumber: tokenNumber,
@@ -520,14 +505,16 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
           if (apiData.tokenNumber) {
             finalTokenNumber = apiData.tokenNumber;
           }
+        } else if (apiRes.status >= 400 && apiRes.status < 500) {
+          const errorMsg = apiData.error || "Order validation failed. Please check your items.";
+          toast.error(errorMsg);
+          setIsSubmitting(false);
+          return;
         } else {
-          console.warn("API /api/orders/submit returned error, falling back to direct client insertion:", apiData);
-          if (apiData.error) {
-            console.error("API Error details:", apiData.error, apiData.code, apiData.details, apiData.hint);
-          }
+          console.warn("API /api/orders/submit returned server error, falling back to secure RPC:", apiData);
         }
       } catch (apiErr: any) {
-        console.warn("API submit endpoint fetch error:", apiErr?.message, apiErr);
+        console.warn("API submit endpoint fetch error:", apiErr?.message);
       }
 
       // Fallback Attempt: Direct Supabase Client Insertion if API route unhandled
@@ -540,14 +527,10 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
           p_table_number: "Takeaway",
           p_customer_name: customerName.trim(),
           p_customer_phone: customerPhone.trim() || null,
-          p_payment_method: "pay_at_counter",
+          p_payment_method: "cash",
           p_notes: orderNotes.trim() || "Takeaway Cash Order",
           p_items: orderItems,
         });
-
-        if (rpcError) {
-          console.error("RPC submit_customer_order Error:", rpcError?.message, rpcError?.code, rpcError?.details, rpcError?.hint);
-        }
 
         if (!rpcError && rpcData && (rpcData as any).order_id) {
           createdOrderId = (rpcData as any).order_id;
@@ -560,7 +543,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
             .insert(orderPayload);
 
           if (orderErr) {
-            console.error("Orders direct insert Error:", orderErr?.message, orderErr?.code, orderErr?.details, orderErr?.hint);
+            console.error("Orders direct insert Error:", orderErr?.message);
             throw orderErr;
           }
 
@@ -580,7 +563,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
 
             const { error: itemsErr } = await supabase.from("order_items").insert(itemInserts);
             if (itemsErr) {
-              console.error("Order items direct insert Error:", itemsErr?.message, itemsErr?.code, itemsErr?.details, itemsErr?.hint);
+              console.error("Order items direct insert Error:", itemsErr?.message);
               throw itemsErr;
             }
 
@@ -591,14 +574,10 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
                 const inv = invMap.get(key)!;
                 const newQty = Math.max(0, inv.quantity - item.quantity);
 
-                const { error: stockUpdateErr } = await supabase
+                await supabase
                   .from("inventory")
                   .update({ quantity: newQty, updated_at: new Date().toISOString() })
                   .eq("id", inv.id);
-
-                if (stockUpdateErr) {
-                  console.error("Inventory update Error:", stockUpdateErr?.message, stockUpdateErr?.code, stockUpdateErr?.details, stockUpdateErr?.hint);
-                }
 
                 if (newQty === 0) {
                   await supabase
@@ -611,9 +590,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
 
             orderProcessed = true;
           } catch (itemOrStockErr) {
-            // Rollback orphan orders row to prevent duplicate/incomplete order on retry
             if (createdOrderId) {
-              console.warn("Rolling back orphan orders record to prevent duplicates on retry:", createdOrderId);
               await supabase.from("order_items").delete().eq("order_id", createdOrderId);
               await supabase.from("orders").delete().eq("id", createdOrderId);
             }
@@ -634,9 +611,17 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
       });
 
       setCart([]);
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.removeItem(`bishop_checkout_${shop.id}`);
+        } catch {
+          // ignore
+        }
+      }
+
       toast.success(`Cash order confirmed! Token ID: ${finalTokenNumber}`);
     } catch (error: any) {
-      console.error("Submit order failed:", error?.message, error?.code, error?.details, error?.hint, error);
+      console.error("Submit order failed:", error?.message);
       toast.error(error?.message || "Unable to place order. Please try again.");
     } finally {
       setIsSubmitting(false);
@@ -645,16 +630,12 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
 
   // Placed Cash Order Digital Bill View
   if (placedOrder) {
-    const halfTaxRate = (taxRate / 2).toFixed(1);
-    const halfTaxAmount = (placedOrder.tax / 2).toFixed(2);
+    const halfTaxRate = ((taxRate || 0) / 2).toFixed(1);
+    const halfTaxAmount = Number((((placedOrder.tax || 0) / 2)).toFixed(2));
     const payT = DASHBOARD_TRANSLATIONS[lang || "en"].customerPaymentPage;
 
     async function handleTakeScreenshot() {
-      console.log("[Screenshot] 1. Take Screenshot button clicked");
-      if (isCapturingScreenshot) {
-        console.log("[Screenshot] Capture already in progress, ignoring duplicate click");
-        return;
-      }
+      if (isCapturingScreenshot) return;
       setIsCapturingScreenshot(true);
       try {
         await captureBillScreenshot(
@@ -663,8 +644,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
         );
         toast.success("Screenshot saved successfully!");
       } catch (err: any) {
-        console.error("[Screenshot] Screenshot error message:", err?.message || String(err));
-        console.error("[Screenshot] Screenshot error stack:", err?.stack || "No stack trace");
+        console.error("[Screenshot] Screenshot error:", err?.message || String(err));
         toast.error("Failed to capture screenshot: " + (err?.message || "Unknown error"));
       } finally {
         setIsCapturingScreenshot(false);
@@ -736,7 +716,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
                 <span className="col-span-2 text-right">Total</span>
               </div>
 
-              {placedOrder.cartItems.map((item, idx) => (
+              {(placedOrder.cartItems || []).map((item, idx) => (
                 <div key={idx} className="grid grid-cols-12 text-[11px] items-start py-0.5">
                   <span className="col-span-1 text-slate-400">{idx + 1}</span>
                   <span className="col-span-5 font-semibold text-slate-900 break-words flex items-center gap-1">
@@ -748,9 +728,9 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
                     <span>{item.name}</span>
                   </span>
                   <span className="col-span-2 text-center font-bold">{item.quantity}</span>
-                  <span className="col-span-2 text-right text-slate-600">{item.price}</span>
+                  <span className="col-span-2 text-right text-slate-600">{formatCurrency(item.price)}</span>
                   <span className="col-span-2 text-right font-bold text-slate-900">
-                    {(item.price * item.quantity).toFixed(2)}
+                    {formatCurrency(item.price * item.quantity)}
                   </span>
                 </div>
               ))}
@@ -763,18 +743,18 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
             <div className="space-y-1 text-xs">
               <div className="flex justify-between text-slate-600">
                 <span>{payT.subtotal}</span>
-                <span>{formatCurrency(placedOrder.subtotal)}</span>
+                <span>{formatCurrency(placedOrder.subtotal || 0)}</span>
               </div>
 
               {taxRate > 0 && (
                 <>
                   <div className="flex justify-between text-slate-500 text-[11px]">
                     <span>{payT.cgst} ({halfTaxRate}%)</span>
-                    <span>₹{halfTaxAmount}</span>
+                    <span>{formatCurrency(halfTaxAmount)}</span>
                   </div>
                   <div className="flex justify-between text-slate-500 text-[11px]">
                     <span>{payT.sgst} ({halfTaxRate}%)</span>
-                    <span>₹{halfTaxAmount}</span>
+                    <span>{formatCurrency(halfTaxAmount)}</span>
                   </div>
                 </>
               )}
@@ -784,7 +764,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
 
               <div className="flex justify-between font-black text-sm text-slate-900">
                 <span>{payT.totalAmount}</span>
-                <span>{formatCurrency(placedOrder.total)}</span>
+                <span>{formatCurrency(placedOrder.total || 0)}</span>
               </div>
             </div>
 
@@ -794,7 +774,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
             {/* Payment Mode & Status: CONFIRMED */}
             <div className="space-y-1.5 text-center">
               <p className="text-[11px] text-slate-600">
-                Payment Method: <strong className="uppercase text-slate-900">CASH</strong>
+                Payment Method: <strong className="uppercase text-slate-900">CASH (Pay at Counter)</strong>
               </p>
               <div className="inline-block px-3 py-1 bg-emerald-50 border border-emerald-300 rounded-lg text-emerald-900 font-extrabold text-[11px] uppercase tracking-wider">
                 ORDER STATUS: CONFIRMED
@@ -805,9 +785,19 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
             <div className="border-b-2 border-dashed border-slate-300 my-2" />
 
             {/* Footer Message */}
-            <div className="text-center text-[10px] text-slate-500 space-y-0.5 pt-1">
+            <div className="text-center text-[10px] text-slate-500 space-y-1 pt-1">
               <p className="font-semibold text-slate-700">{payT.thankYouMessage}</p>
-              <p className="text-[9px]">Powered by BISHOP POS</p>
+              <div className="flex items-center justify-center gap-1.5">
+                <Image
+                  src="/bishop-icon.svg"
+                  alt="BISHOP"
+                  width={14}
+                  height={14}
+                  className="h-3.5 w-3.5 object-contain"
+                  unoptimized
+                />
+                <p className="text-[9px]">Powered by BISHOP POS</p>
+              </div>
             </div>
 
           </div>
@@ -846,7 +836,13 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
           <div>
             <div className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-mint-500 inline-block" />
+              <Image
+                src="/bishop-icon.svg"
+                alt="BISHOP"
+                width={16}
+                height={16}
+                className="h-4 w-4 object-contain shrink-0"
+              />
               <p className="text-xs uppercase tracking-widest font-bold text-mint-700">{shop.name}</p>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">{t.menu}</h1>
@@ -948,7 +944,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
             ))}
           </div>
 
-          {/* Cart & Customer Details Side Sidebar */}
+          {/* Cart & Customer Details Sidebar */}
           <aside className="space-y-6">
             <Card padding="md" className="rounded-3xl shadow-sm border-slate-200">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100">
@@ -1083,7 +1079,7 @@ export default function MenuCustomerPage({ shop, categories, menuItems }: MenuCu
                   className="w-full border-slate-300 text-slate-800 font-extrabold touch-manipulation hover:bg-slate-50"
                   size="md"
                 >
-                  {isSubmitting ? t.placingOrder : (t.confirmCashOrder || "CONFIRM CASH ORDER")}
+                  {isSubmitting ? t.placingOrder : (t.confirmCashOrder || t.placeOrder || "CONFIRM CASH ORDER")}
                 </Button>
               </div>
             </Card>

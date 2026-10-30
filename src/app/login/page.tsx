@@ -23,13 +23,14 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuthStore } from "@/stores/auth-store";
 import Link from "next/link";
 import Image from "next/image";
 import { useLanguageStore } from "@/stores/language-store";
 import { DASHBOARD_TRANSLATIONS } from "@/lib/translations";
 import { validatePasswordPolicy } from "@/lib/auth/password";
 
-type AuthMode = "login" | "forgot" | "verify_otp" | "new_password";
+type AuthMode = "login" | "forgot" | "verify_otp" | "new_password" | "reset_success";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -63,6 +64,28 @@ export default function LoginPage() {
   // Server-issued reset authorization token (issued ONLY after OTP verification)
   const [resetAuthorizationToken, setResetAuthorizationToken] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+
+  // Handle URL callback parameters on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const callbackError = searchParams.get("error");
+      if (callbackError === "auth_callback_error") {
+        toast.error("Email confirmation link was invalid or has expired. Please sign in or request a new link.");
+      }
+      const modeParam = searchParams.get("mode");
+      if (modeParam === "forgot") {
+        setMode("forgot");
+        const emailParam = searchParams.get("email");
+        if (emailParam) {
+          setForgotEmail(emailParam);
+        }
+      }
+    } catch {
+      // ignore param parse errors
+    }
+  }, []);
 
   // Live 30-Second Login Lockout Countdown Timer
   useEffect(() => {
@@ -122,10 +145,13 @@ export default function LoginPage() {
           setLockoutSeconds(data.remainingSeconds);
           toast.error(`Too many failed attempts. Temporary lockout active for ${data.remainingSeconds} seconds.`);
         } else {
-          toast.error(data.error || "Invalid email or password.");
+          toast.error(data.error || "Login failed. Please check your credentials.");
         }
         return;
       }
+
+      // Purge any lingering in-memory state or previous user storage
+      useAuthStore.getState().reset();
 
       // Establish session client-side with Supabase
       if (data.session) {
@@ -268,9 +294,9 @@ export default function LoginPage() {
         return;
       }
 
-      toast.success("Password Updated Successfully");
+      toast.success(data.message || "Password Updated Successfully");
 
-      // Reset recovery flow states and return user to BISHOP login screen
+      // Reset recovery flow states and transition to dedicated success screen
       setEmail(forgotEmail);
       setPassword("");
       setForgotEmail("");
@@ -281,7 +307,7 @@ export default function LoginPage() {
       setAccessToken(null);
       setIsMaxAttemptsLocked(false);
       setLockoutSeconds(0);
-      setMode("login");
+      setMode("reset_success");
     } catch (err: any) {
       toast.error("An error occurred while setting new password.");
     } finally {
@@ -338,11 +364,11 @@ export default function LoginPage() {
             className="inline-flex items-center justify-center mb-4"
           >
             <Image
-              src="/bishop-logo.webp"
+              src="/bishop-logo.svg"
               alt="BISHOP"
-              width={56}
+              width={160}
               height={56}
-              className="h-14 w-auto object-contain drop-shadow-xs"
+              className="h-14 sm:h-16 w-auto object-contain drop-shadow-xs"
               priority
             />
           </motion.div>
@@ -357,7 +383,9 @@ export default function LoginPage() {
               ? "Enter your email address to receive a 6-digit verification code."
               : mode === "verify_otp"
               ? "Enter the 6-digit verification code sent to your email."
-              : "Set a strong new password for your BISHOP account."}
+              : mode === "new_password"
+              ? "Set a strong new password for your BISHOP account."
+              : "Your password has been reset successfully."}
           </p>
         </div>
 
@@ -743,6 +771,44 @@ export default function LoginPage() {
                     Set Password
                   </Button>
                 </form>
+              </motion.div>
+            )}
+
+            {/* ── MODE 5: STEP 4 - PASSWORD RESET SUCCESS ── */}
+            {mode === "reset_success" && (
+              <motion.div
+                key="reset_success_view"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="text-center py-2"
+              >
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mb-4 shadow-sm shadow-emerald-500/10">
+                  <CheckCircle2 className="h-9 w-9 text-emerald-600" />
+                </div>
+
+                <h3 className="text-xl font-extrabold text-slate-900 mb-2">
+                  Password Reset Successful!
+                </h3>
+
+                <p className="text-sm text-slate-600 mb-6 leading-relaxed max-w-sm mx-auto">
+                  Your password has been securely updated. You can now log in to your BISHOP account with your new credentials.
+                </p>
+
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={() => {
+                    setPassword("");
+                    setIsMaxAttemptsLocked(false);
+                    setLockoutSeconds(0);
+                    setMode("login");
+                  }}
+                  rightIcon={<ArrowRight className="h-4 w-4" />}
+                  className="w-full"
+                >
+                  Return to Login
+                </Button>
               </motion.div>
             )}
           </AnimatePresence>

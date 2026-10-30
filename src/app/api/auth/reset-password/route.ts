@@ -1,10 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { validatePasswordPolicy } from "@/lib/auth/password";
-import { validateResetToken, consumeResetToken } from "@/lib/auth/otpStore";
+import {
+  validatePasswordPolicy,
+  validateResetTokenAsync,
+  consumeResetTokenAsync,
+} from "@/server/auth";
+import { checkRateLimit, getClientIp } from "@/server/common/rate-limiter";
 
 export async function POST(req: NextRequest) {
   try {
+    // 0. Rate limiting: max 5 password reset attempts per 15 minutes per IP
+    const clientIp = getClientIp(req);
+    const rateLimit = checkRateLimit(`reset_pwd_${clientIp}`, 5, 15 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too many password reset attempts. Please wait before trying again.",
+          retryAfterSeconds: Math.ceil(rateLimit.resetInMs / 1000),
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.ceil(rateLimit.resetInMs / 1000).toString(),
+          },
+        }
+      );
+    }
     const body = await req.json();
     const {
       email,
@@ -23,11 +44,32 @@ export async function POST(req: NextRequest) {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. SECURITY REQUIREMENT: Enforce server-side reset_authorization_token check
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+
+    // 1. SECURITY REQUIREMENT: Enforce server-side authorization check
     // User MUST NOT be able to set a new password without completing OTP verification first!
-    const isTokenAuthorized =
-      Boolean(reset_authorization_token) &&
-      validateResetToken(cleanEmail, reset_authorization_token);
+    let isTokenAuthorized = false;
+
+    if (reset_authorization_token) {
+      isTokenAuthorized = await validateResetTokenAsync(cleanEmail, reset_authorization_token);
+    }
+
+    if (!isTokenAuthorized && access_token && supabaseUrl && anonKey) {
+      try {
+        const userClient = createClient(supabaseUrl, anonKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+          global: { headers: { Authorization: `Bearer ${access_token}` } },
+        });
+        const { data: { user } } = await userClient.auth.getUser();
+        if (user && user.email?.toLowerCase() === cleanEmail) {
+          isTokenAuthorized = true;
+        }
+      } catch (tokenErr) {
+        console.warn("access_token verification note:", tokenErr);
+      }
+    }
 
     if (!isTokenAuthorized) {
       return NextResponse.json(
@@ -65,10 +107,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-
     if (!supabaseUrl) {
       return NextResponse.json(
         { error: "Server authentication configuration missing." },
@@ -78,21 +116,36 @@ export async function POST(req: NextRequest) {
 
     let passwordUpdateSuccess = false;
 
-    // 3a. Update password via Supabase Auth Admin API (Primary & Most Secure Method)
+    // 3a. Update password via Supabase Auth Admin API
     if (serviceKey) {
       try {
         const adminClient = createClient(supabaseUrl, serviceKey, {
           auth: { autoRefreshToken: false, persistSession: false },
         });
 
-        const { data: usersData } = await adminClient.auth.admin.listUsers();
-        const targetUser = usersData?.users?.find(
-          (u) => u.email?.toLowerCase() === cleanEmail
-        );
+        let targetUserId: string | null = null;
+        const { data: prof } = await adminClient
+          .from("profiles")
+          .select("id")
+          .eq("email", cleanEmail)
+          .maybeSingle();
 
-        if (targetUser) {
+        if (prof?.id) {
+          targetUserId = prof.id;
+        } else {
+          const { data: usersData } = await adminClient.auth.admin.listUsers({
+            page: 1,
+            perPage: 1000,
+          });
+          const targetUser = usersData?.users?.find(
+            (u) => u.email?.toLowerCase() === cleanEmail
+          );
+          if (targetUser) targetUserId = targetUser.id;
+        }
+
+        if (targetUserId) {
           const { error: adminUpdateErr } =
-            await adminClient.auth.admin.updateUserById(targetUser.id, {
+            await adminClient.auth.admin.updateUserById(targetUserId, {
               password: newPassword,
             });
 
@@ -134,9 +187,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Invalidate used reset_authorization_token
+    // 4. Invalidate used reset_authorization_token to prevent reuse
     if (reset_authorization_token) {
-      consumeResetToken(cleanEmail, reset_authorization_token);
+      await consumeResetTokenAsync(cleanEmail, reset_authorization_token);
     }
 
     // 5. Reset failed login attempts in login_attempts table upon successful password reset

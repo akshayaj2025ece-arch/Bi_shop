@@ -1,11 +1,13 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuthStore } from "@/stores/auth-store";
+import type { Shop } from "@/lib/types";
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -17,6 +19,11 @@ import {
   Settings,
   X,
   ChevronLeft,
+  ChevronDown,
+  Check,
+  Plus,
+  Store,
+  Building2,
 } from "lucide-react";
 import { useLanguageStore } from "@/stores/language-store";
 import { DASHBOARD_TRANSLATIONS } from "@/lib/translations";
@@ -25,7 +32,7 @@ const navItems = [
   { label: "Dashboard", key: "dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Orders", key: "orders", href: "/dashboard/orders", icon: ShoppingBag },
   { label: "Menu", key: "menu", href: "/dashboard/menu", icon: UtensilsCrossed },
-  { label: "Items", key: "inventory", href: "/dashboard/inventory", icon: Package },
+  { label: "Inventory", key: "inventory", href: "/dashboard/inventory", icon: Package },
   { label: "Employees", key: "employees", href: "/dashboard/employees", icon: Users },
   { label: "Tasks", key: "tasks", href: "/dashboard/tasks", icon: ClipboardList },
   { label: "Analytics", key: "analytics", href: "/dashboard/analytics", icon: BarChart3 },
@@ -46,20 +53,77 @@ export function Sidebar({
   onToggleCollapse,
 }: SidebarProps) {
   const pathname = usePathname();
-  const { shop } = useAuthStore();
+  const router = useRouter();
+  const { user, shop, shops, isAllShops, setShop, setIsAllShops } = useAuthStore();
   const { lang } = useLanguageStore();
   const t = DASHBOARD_TRANSLATIONS[lang || "en"];
 
+  const isShopkeeper = user?.role === "shopkeeper" || (user?.role !== "employee" && (shops?.length || 0) > 0);
+  const isMultiShop = isShopkeeper && (shops?.length || 0) > 1;
+
+  const [showShopDropdown, setShowShopDropdown] = useState(false);
+  const shopDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        shopDropdownRef.current &&
+        !shopDropdownRef.current.contains(e.target as Node)
+      ) {
+        setShowShopDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Hide sidebar when in "All Shops" mode.
+  // When an individual shop is selected (!isAllShops), always display the sidebar.
+  if (isMultiShop && isAllShops) {
+    return null;
+  }
+
+  function handleSelectShop(selectedShop: Shop) {
+    const validShop = shops.find((s) => s.id === selectedShop.id);
+    if (!validShop) return;
+
+    setShop(validShop);
+    setIsAllShops(false);
+    if (typeof window !== "undefined") {
+      try {
+        const userStorageKey = user?.id ? `bishop_active_shop_id_${user.id}` : "bishop_active_shop_id";
+        localStorage.setItem(userStorageKey, validShop.id);
+        localStorage.setItem("bishop_active_shop_id", validShop.id);
+      } catch {}
+    }
+    setShowShopDropdown(false);
+  }
+
+  function handleSelectAllShops() {
+    setIsAllShops(true);
+    if (typeof window !== "undefined") {
+      try {
+        const userStorageKey = user?.id ? `bishop_active_shop_id_${user.id}` : "bishop_active_shop_id";
+        localStorage.setItem(userStorageKey, "all");
+        localStorage.setItem("bishop_active_shop_id", "all");
+      } catch {}
+    }
+    setShowShopDropdown(false);
+    router.push("/dashboard");
+  }
+
   const sidebarContent = (
     <div className="flex flex-col h-full">
-      {/* Logo */}
+      {/* Logo & Shop Header */}
       <div
+        ref={shopDropdownRef}
         className={cn(
-          "flex items-center h-16 px-4 border-b border-slate-100",
+          "relative flex items-center h-16 px-4 border-b border-slate-100",
           isCollapsed ? "justify-center" : "gap-2.5"
         )}
       >
-        <Link href="/dashboard" className="flex items-center gap-2.5 group overflow-hidden">
+        <Link href="/dashboard" className="shrink-0 flex items-center" title="BISHOP Dashboard">
           <div style={{ perspective: 1000 }} className="shrink-0">
             <motion.div
               animate={{
@@ -81,7 +145,7 @@ export function Sidebar({
               className="motion-reduce:animate-none motion-reduce:transform-none shrink-0"
             >
               <Image
-                src="/bishop-logo.webp"
+                src="/bishop-icon.svg"
                 alt="BISHOP"
                 width={36}
                 height={36}
@@ -90,8 +154,40 @@ export function Sidebar({
               />
             </motion.div>
           </div>
-          {!isCollapsed && (
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
+        </Link>
+
+        {!isCollapsed && (
+          isShopkeeper && (shops?.length || 0) >= 1 ? (
+            <button
+              type="button"
+              onClick={() => setShowShopDropdown((prev) => !prev)}
+              className="flex-1 min-w-0 flex items-center justify-between text-left group p-1 -m-1 rounded-xl hover:bg-slate-50 transition-colors"
+              title="Click to switch shop or add shop"
+              aria-label="Switch shop"
+            >
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <p
+                  className="text-lg font-black tracking-tight text-emerald-500 truncate leading-tight group-hover:text-emerald-400 transition-colors"
+                  style={{ fontFamily: "'Arial Black', sans-serif" }}
+                >
+                  {isAllShops ? "All Shops" : (shop?.name || "BISHOP")}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(34,197,164,0.8)] animate-pulse" />
+                  <p className="text-[11px] font-extrabold text-emerald-600 truncate uppercase tracking-widest leading-none">
+                    {user?.role === "employee" ? "EMPLOYEE" : t.common.shopkeeper}
+                  </p>
+                </div>
+              </div>
+              <ChevronDown
+                className={cn(
+                  "h-4 w-4 text-slate-400 shrink-0 transition-transform duration-200 group-hover:text-emerald-500",
+                  showShopDropdown && "rotate-180"
+                )}
+              />
+            </button>
+          ) : (
+            <Link href="/dashboard" className="flex-1 min-w-0 flex flex-col justify-center group">
               <p
                 className="text-lg font-black tracking-tight text-emerald-500 truncate leading-tight group-hover:text-emerald-400 transition-colors"
                 style={{ fontFamily: "'Arial Black', sans-serif" }}
@@ -101,12 +197,13 @@ export function Sidebar({
               <div className="flex items-center gap-1.5 mt-0.5">
                 <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(34,197,164,0.8)] animate-pulse" />
                 <p className="text-[11px] font-extrabold text-emerald-600 truncate uppercase tracking-widest leading-none">
-                  {t.common.shopkeeper}
+                  {user?.role === "employee" ? "EMPLOYEE" : t.common.shopkeeper}
                 </p>
               </div>
-            </div>
-          )}
-        </Link>
+            </Link>
+          )
+        )}
+
         {/* Mobile close */}
         <button
           onClick={onClose}
@@ -114,6 +211,82 @@ export function Sidebar({
         >
           <X className="h-4 w-4" />
         </button>
+
+        {/* Multi-Shop Dropdown Menu */}
+        {showShopDropdown && !isCollapsed && isShopkeeper && (shops?.length || 0) >= 1 && (
+          <div className="absolute left-2 right-2 top-16 bg-white rounded-2xl border border-slate-200 shadow-2xl p-2 z-50 animate-in fade-in-50 zoom-in-95 duration-150">
+            <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                Switch Shop
+              </p>
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-1 pr-0.5">
+              {/* All Shops Option (multi-shop only) */}
+              {shops.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleSelectAllShops}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                    isAllShops
+                      ? "bg-mint-50 text-mint-700 font-bold"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <Building2
+                      className={`h-4 w-4 shrink-0 ${
+                        isAllShops ? "text-mint-600" : "text-slate-400"
+                      }`}
+                    />
+                    <span className="truncate">All Shops</span>
+                  </div>
+                  {isAllShops && <Check className="h-4 w-4 text-mint-600 shrink-0" />}
+                </button>
+              )}
+
+              {/* Individual Registered Shops */}
+              {shops.map((s) => {
+                const isSelected = !isAllShops && shop?.id === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleSelectShop(s)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                      isSelected
+                        ? "bg-mint-50 text-mint-700 font-bold"
+                        : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <Store
+                        className={`h-4 w-4 shrink-0 ${
+                          isSelected ? "text-mint-600" : "text-slate-400"
+                        }`}
+                      />
+                      <span className="truncate">{s.name}</span>
+                    </div>
+                    {isSelected && <Check className="h-4 w-4 text-mint-600 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Add Shop Action */}
+            <div className="border-t border-slate-100 my-1.5" />
+            <Link
+              href="/shop/setup"
+              onClick={() => {
+                setShowShopDropdown(false);
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-mint-700 hover:bg-mint-50/80 transition-colors"
+            >
+              <Plus className="h-4 w-4 text-mint-600 shrink-0" />
+              <span>+ Add Shop</span>
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Navigation */}

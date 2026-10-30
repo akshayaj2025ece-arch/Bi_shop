@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/stores/auth-store";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,18 @@ export default function ShopSetupPage() {
     tax_rate: "0",
     owner_age: "",
   });
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }: any) => {
+      if (data?.user?.email) {
+        setForm((prev) => ({
+          ...prev,
+          email: prev.email || data.user.email || "",
+        }));
+      }
+    });
+  }, []);
 
   function updateForm(field: string, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -214,6 +227,7 @@ export default function ShopSetupPage() {
         const { error: linkProfileErr } = await supabase
           .from("profiles")
           .update({
+            role: "shopkeeper",
             shop_id: dbShop.id,
             phone: form.phone_number.trim() || null,
           })
@@ -221,6 +235,29 @@ export default function ShopSetupPage() {
 
         if (linkProfileErr) {
           console.error("Linking profile error:", linkProfileErr);
+        }
+
+        // Fetch verified owned shops directly from the database for this authenticated account
+        const { data: userOwnedShops } = await supabase
+          .from("shops")
+          .select("*")
+          .eq("owner_id", authUser.id)
+          .order("created_at", { ascending: true });
+
+        const verifiedShops = (userOwnedShops as Shop[]) && (userOwnedShops as Shop[]).length > 0
+          ? (userOwnedShops as Shop[])
+          : [dbShop as Shop];
+
+        useAuthStore.getState().setShops(verifiedShops);
+        useAuthStore.getState().setIsAllShops(false);
+        if (dbShop && dbShop.owner_id === authUser.id) {
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem("bishop_active_shop_id", dbShop.id);
+            } catch {
+              // ignore
+            }
+          }
         }
 
         setShop(dbShop as Shop);
@@ -326,6 +363,7 @@ export default function ShopSetupPage() {
       const { error: updateProfileError } = await supabase
         .from("profiles")
         .update({
+          role: "shopkeeper",
           shop_id: shopId,
           phone: form.phone_number.trim() || null,
         })
@@ -353,8 +391,33 @@ export default function ShopSetupPage() {
         updated_at: new Date().toISOString(),
       };
 
+      // Fetch fresh, verified owned shops directly for this authenticated account
+      const { data: userOwnedShops } = await supabase
+        .from("shops")
+        .select("*")
+        .eq("owner_id", authUser.id)
+        .order("created_at", { ascending: true });
+
+      const verifiedShops = (userOwnedShops as Shop[]) && (userOwnedShops as Shop[]).length > 0
+        ? (userOwnedShops as Shop[])
+        : [shopDataToSet];
+
+      useAuthStore.getState().setShops(verifiedShops);
+      useAuthStore.getState().setIsAllShops(false);
+      if (newShop && newShop.owner_id === authUser.id) {
+        if (typeof window !== "undefined") {
+          try {
+            const userStorageKey = `bishop_active_shop_id_${authUser.id}`;
+            localStorage.setItem(userStorageKey, shopId);
+            localStorage.setItem("bishop_active_shop_id", shopId);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
       setShop(shopDataToSet);
-      setUser({ ...profileToUse, shop_id: shopId, phone: form.phone_number.trim() } as Profile);
+      setUser({ ...profileToUse, role: "shopkeeper", shop_id: shopId, phone: form.phone_number.trim() } as Profile);
 
       toast.success("Shop created successfully! 🎉");
       router.push("/dashboard");
@@ -395,6 +458,22 @@ export default function ShopSetupPage() {
       >
         {/* Header */}
         <div className="text-center mb-8">
+          <motion.div
+            initial={{ scale: 0.8 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 200, damping: 15 }}
+            className="inline-flex items-center justify-center mb-4"
+          >
+            <Image
+              src="/bishop-logo.svg"
+              alt="BISHOP"
+              width={160}
+              height={56}
+              className="h-14 sm:h-16 w-auto object-contain drop-shadow-xs"
+              priority
+            />
+          </motion.div>
+          <br />
           <motion.div
             initial={{ scale: 0.8 }}
             animate={{ scale: 1 }}
@@ -529,14 +608,19 @@ export default function ShopSetupPage() {
                 leftIcon={<Phone className="h-4 w-4" />}
                 required
               />
-              <Input
-                label={settT.email}
-                type="email"
-                placeholder="shop@example.com"
-                value={form.email}
-                onChange={(e) => updateForm("email", e.target.value)}
-                leftIcon={<Mail className="h-4 w-4" />}
-              />
+              <div>
+                <Input
+                  label={`${settT.email} (Public Contact)`}
+                  type="email"
+                  placeholder="shop@example.com"
+                  value={form.email}
+                  onChange={(e) => updateForm("email", e.target.value)}
+                  leftIcon={<Mail className="h-4 w-4" />}
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Public contact email. Shop ownership is bound to your signed-in account ({user?.email || "Signed-in account"}).
+                </p>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

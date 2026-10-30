@@ -208,9 +208,9 @@ export default function CustomerSetupPage() {
             className="inline-flex items-center justify-center mb-3"
           >
             <Image
-              src="/bishop-logo.webp"
+              src="/bishop-logo.svg"
               alt="BISHOP"
-              width={56}
+              width={160}
               height={56}
               className="h-12 sm:h-14 w-auto object-contain drop-shadow-xs"
               priority

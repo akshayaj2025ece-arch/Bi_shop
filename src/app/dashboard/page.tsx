@@ -32,6 +32,7 @@ import {
   Store,
 } from "lucide-react";
 import Link from "next/link";
+import { MultiShopDashboard } from "@/components/dashboard/multi-shop-dashboard";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
@@ -52,7 +53,11 @@ const statusVariant: Record<string, "default" | "success" | "warning" | "danger"
 };
 
 export default function DashboardPage() {
-  const { user, shop } = useAuthStore();
+  const { user, shop, shops, isAllShops } = useAuthStore();
+  const isMultiShopOwner =
+    (user?.role === "shopkeeper" || (user?.role !== "employee" && (shops?.length || 0) > 0)) &&
+    (shops?.length || 0) > 1;
+
   const { stats, isLoading, refetch } = useDashboardStats();
   const [menuUrl, setMenuUrl] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -70,6 +75,12 @@ export default function DashboardPage() {
     if (typeof window === "undefined") return;
     setMenuUrl(`${window.location.origin}/menu/${shop.id}`);
   }, [shop]);
+
+  // If the owner has multiple shops AND "All Shops" mode is active, render MultiShopDashboard.
+  // When a specific individual shop is selected (!isAllShops), render that shop's dedicated dashboard UI.
+  if (isMultiShopOwner && isAllShops) {
+    return <MultiShopDashboard />;
+  }
 
   if (!shop) {
     return (

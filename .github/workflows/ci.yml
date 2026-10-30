@@ -1,0 +1,44 @@
+name: BISHOP CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  validate:
+    name: Build & Security Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install --prefer-offline
+
+      - name: TypeScript Type Checking
+        run: npx tsc --noEmit
+
+      - name: Next.js Production Build
+        run: npm run build
+        env:
+          SESSION_SECRET: "bishop-ci-testing-session-secret-32chars-long"
+          NEXT_PUBLIC_SUPABASE_URL: "https://mock.supabase.co"
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-anon-key"
+          SUPABASE_SERVICE_ROLE_KEY: "mock-service-key"
+
+      - name: Run Security & System Design Test Suite
+        run: node scratch/test-security-and-system-design.cjs
+        env:
+          SESSION_SECRET: "bishop-ci-testing-session-secret-32chars-long"
+          NEXT_PUBLIC_SUPABASE_URL: "https://mock.supabase.co"
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-anon-key"
+          SUPABASE_SERVICE_ROLE_KEY: "mock-service-key"

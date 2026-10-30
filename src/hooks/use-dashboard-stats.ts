@@ -139,14 +139,14 @@ export function useDashboardStats() {
 
         supabase
           .from("orders")
-          .select("id, order_number, customer_name, total, status, created_at")
+          .select("id, order_number, customer_name, grand_total, subtotal, status, created_at")
           .eq("shop_id", shop.id)
           .order("created_at", { ascending: false })
           .limit(10),
 
         supabase
           .from("orders")
-          .select("id, total, grand_total, status, payment_status, created_at")
+          .select("id, grand_total, subtotal, status, payment_status, created_at")
           .eq("shop_id", shop.id)
           .gte("created_at", thirtyDaysAgo)
           .neq("status", "cancelled")
@@ -168,11 +168,11 @@ export function useDashboardStats() {
       const shopOrderIds = (shopOrderIdsRes.data || []).map((o: any) => o.id);
 
       // Fetch top items scoped strictly to shop's order IDs (eliminating cross-tenant data leak)
-      let topItemsData: { name: string; quantity: number; total: number }[] = [];
+      let topItemsData: any[] = [];
       if (shopOrderIds.length > 0) {
         const { data: items } = await supabase
           .from("order_items")
-          .select("name, quantity, total")
+          .select("product_name, quantity, line_total")
           .in("order_id", shopOrderIds)
           .limit(500);
         topItemsData = items || [];
@@ -193,7 +193,7 @@ export function useDashboardStats() {
         if (!isConfirmed) continue;
 
         const orderTime = new Date(order.created_at).getTime();
-        const t = Number(order.total || order.grand_total || 0);
+        const t = Number(order.grand_total ?? order.subtotal ?? 0);
 
         totalRevenue += t; 
 
@@ -226,7 +226,7 @@ export function useDashboardStats() {
         const key = new Date(order.created_at).toISOString().slice(0, 10);
         const entry = dailyMap.get(key);
         if (entry) {
-          entry.revenue += order.total || 0;
+          entry.revenue += Number(order.grand_total ?? order.subtotal ?? 0);
           entry.orders += 1;
         }
       });
@@ -252,14 +252,16 @@ export function useDashboardStats() {
         string,
         { quantity: number; revenue: number }
       >();
-      topItemsData.forEach((item) => {
-        const existing = itemMap.get(item.name) || {
+      topItemsData.forEach((item: any) => {
+        const itemName = item.product_name || item.name || "Item";
+        const itemRevenue = Number(item.line_total ?? item.total ?? 0);
+        const existing = itemMap.get(itemName) || {
           quantity: 0,
           revenue: 0,
         };
-        existing.quantity += item.quantity;
-        existing.revenue += item.total;
-        itemMap.set(item.name, existing);
+        existing.quantity += Number(item.quantity) || 0;
+        existing.revenue += itemRevenue;
+        itemMap.set(itemName, existing);
       });
       const topItems: TopItem[] = Array.from(itemMap.entries())
         .map(([name, data]) => ({ name, ...data }))

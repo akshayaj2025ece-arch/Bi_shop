@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   /* ── Package Import Optimization for Lucide & Framer Motion ── */
   experimental: {
     optimizePackageImports: ["lucide-react", "framer-motion", "chart.js", "react-chartjs-2"],

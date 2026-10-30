@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import MenuCustomerPage from "@/app/menu/[slug]/MenuCustomerPage";
 import type { Category, MenuItem, Shop } from "@/lib/types";
@@ -11,28 +12,34 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { slug } = await params;
+// Deduplicate shop queries between generateMetadata and ShopCustomerPage
+const getCachedShop = cache(async (decodedSlug: string) => {
   const supabase = await createClient();
-  const decodedSlug = decodeURIComponent(slug);
   let { data: shop } = await supabase
     .from("shops")
-    .select("id, name, shop_name, description")
+    .select("*")
     .eq("slug", decodedSlug)
-    .single();
+    .maybeSingle();
 
   if (!shop) {
     const { data: fallbackShop } = await supabase
       .from("shops")
-      .select("id, name, shop_name, description")
+      .select("*")
       .or(`id.eq.${decodedSlug},name.ilike.${decodedSlug},shop_name.ilike.${decodedSlug}`)
       .limit(1)
       .maybeSingle();
 
     shop = fallbackShop;
   }
+  return shop as Shop | null;
+});
 
-  const shopName = shop?.name || shop?.shop_name || "Shop";
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { slug } = await params;
+  const decodedSlug = decodeURIComponent(slug);
+  const shop = await getCachedShop(decodedSlug);
+
+  const shopName = shop?.name || (shop as any)?.shop_name || "Shop";
 
   if (!shop) {
     return {
@@ -50,31 +57,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function ShopCustomerPage({ params }: PageProps) {
   const { slug } = await params;
-  const supabase = await createClient();
-
-  // Query shop by slug, or fallback to id or shop name
   const decodedSlug = decodeURIComponent(slug);
-  let { data: shop, error: shopError } = await supabase
-    .from("shops")
-    .select("*")
-    .eq("slug", decodedSlug)
-    .single();
-
-  if (!shop) {
-    const { data: fallbackShop } = await supabase
-      .from("shops")
-      .select("*")
-      .or(`id.eq.${decodedSlug},name.ilike.${decodedSlug},shop_name.ilike.${decodedSlug}`)
-      .limit(1)
-      .maybeSingle();
-
-    shop = fallbackShop;
-  }
+  const shop = await getCachedShop(decodedSlug);
 
   if (!shop) {
     notFound();
   }
 
+  const supabase = await createClient();
   const [categoriesRes, itemsRes] = await Promise.all([
     supabase
       .from("categories")

@@ -6,13 +6,41 @@ import { useAuthStore } from "@/stores/auth-store";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/dashboard/stat-card";
+import dynamic from "next/dynamic";
 import { LoadingSpinner } from "@/components/ui/loading";
-import {
-  RevenueChart,
-  OrdersChart,
-  StatusChart,
-  TopItemsChart,
-} from "@/components/charts/charts";
+
+// Lazy-load Chart.js visualization components so they don't block critical page rendering
+const RevenueChart = dynamic(
+  () => import("@/components/charts/charts").then((mod) => mod.RevenueChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-[280px] bg-slate-50 rounded-2xl animate-pulse" />,
+  }
+);
+
+const OrdersChart = dynamic(
+  () => import("@/components/charts/charts").then((mod) => mod.OrdersChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-[280px] bg-slate-50 rounded-2xl animate-pulse" />,
+  }
+);
+
+const StatusChart = dynamic(
+  () => import("@/components/charts/charts").then((mod) => mod.StatusChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-[280px] bg-slate-50 rounded-2xl animate-pulse" />,
+  }
+);
+
+const TopItemsChart = dynamic(
+  () => import("@/components/charts/charts").then((mod) => mod.TopItemsChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-[280px] bg-slate-50 rounded-2xl animate-pulse" />,
+  }
+);
 import { formatCurrency } from "@/lib/utils";
 import { DASHBOARD_TRANSLATIONS } from "@/lib/translations";
 import { useLanguageStore } from "@/stores/language-store";

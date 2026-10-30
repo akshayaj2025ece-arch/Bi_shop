@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -76,19 +76,45 @@ function getDaysAgo(days: number): string {
   return d.toISOString();
 }
 
+// Global SWR in-memory cache for instant zero-latency navigation between dashboard pages
+const globalStatsCache = new Map<string, { stats: DashboardStats; timestamp: number }>();
+const CACHE_FRESH_WINDOW_MS = 25_000; // 25s fresh window
+
 /**
- * Fetches all dashboard statistics from Supabase.
- * Returns real-time data for orders, revenue, inventory, employees, etc.
+ * Fetches dashboard statistics from Supabase with instant SWR caching.
+ * Renders previous stats immediately (0ms) and updates in background.
  */
 export function useDashboardStats() {
   const { shop } = useAuthStore();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const shopId = shop?.id;
 
-  const fetchStats = useCallback(async () => {
-    if (!shop) {
+  const cachedEntry = shopId ? globalStatsCache.get(shopId) : undefined;
+  const [stats, setStats] = useState<DashboardStats | null>(cachedEntry?.stats || null);
+  const [isLoading, setIsLoading] = useState(!cachedEntry);
+  const isFetchingRef = useRef(false);
+
+  const fetchStats = useCallback(async (force = false) => {
+    if (!shopId) {
       setIsLoading(false);
       return;
+    }
+
+    const currentCached = globalStatsCache.get(shopId);
+    const now = Date.now();
+
+    // Use fresh cache if available and not forced
+    if (!force && currentCached && now - currentCached.timestamp < CACHE_FRESH_WINDOW_MS) {
+      setStats(currentCached.stats);
+      setIsLoading(false);
+      return;
+    }
+
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    // Only set loading to true if we don't have any cached stats to display
+    if (!currentCached) {
+      setIsLoading(true);
     }
 
     try {
@@ -98,11 +124,10 @@ export function useDashboardStats() {
       const monthStart = getStartOfMonth();
       const thirtyDaysAgo = getDaysAgo(30);
 
-      // Run initial queries
+      // Run optimized parallel queries
       const [
         totalOrdersRes,
         inventoryRes,
-        lowStockRes,
         employeeRes,
         menuItemRes,
         recentOrdersRes,
@@ -113,41 +138,37 @@ export function useDashboardStats() {
         supabase
           .from("orders")
           .select("id", { count: "exact", head: true })
-          .eq("shop_id", shop.id)
+          .eq("shop_id", shopId)
           .neq("status", "cancelled"),
 
-        supabase
-          .from("inventory")
-          .select("id", { count: "exact", head: true })
-          .eq("shop_id", shop.id),
-
+        // Combined inventory query: provides both total count and low stock items
         supabase
           .from("inventory")
           .select("quantity, min_quantity")
-          .eq("shop_id", shop.id),
+          .eq("shop_id", shopId),
 
         supabase
           .from("employees")
           .select("id", { count: "exact", head: true })
-          .eq("shop_id", shop.id)
+          .eq("shop_id", shopId)
           .eq("is_active", true),
 
         supabase
           .from("menu_items")
           .select("id", { count: "exact", head: true })
-          .eq("shop_id", shop.id),
+          .eq("shop_id", shopId),
 
         supabase
           .from("orders")
           .select("id, order_number, customer_name, grand_total, subtotal, status, created_at")
-          .eq("shop_id", shop.id)
+          .eq("shop_id", shopId)
           .order("created_at", { ascending: false })
           .limit(10),
 
         supabase
           .from("orders")
           .select("id, grand_total, subtotal, status, payment_status, created_at")
-          .eq("shop_id", shop.id)
+          .eq("shop_id", shopId)
           .gte("created_at", thirtyDaysAgo)
           .neq("status", "cancelled")
           .order("created_at", { ascending: true }),
@@ -155,30 +176,29 @@ export function useDashboardStats() {
         supabase
           .from("orders")
           .select("status")
-          .eq("shop_id", shop.id),
+          .eq("shop_id", shopId),
 
         supabase
           .from("orders")
           .select("id")
-          .eq("shop_id", shop.id)
-          .limit(1000),
+          .eq("shop_id", shopId)
+          .limit(500),
       ]);
 
       const thirtyDaysRecords = last30DaysOrdersRes.data || [];
       const shopOrderIds = (shopOrderIdsRes.data || []).map((o: any) => o.id);
 
-      // Fetch top items scoped strictly to shop's order IDs (eliminating cross-tenant data leak)
+      // Fetch top items scoped strictly to shop's order IDs
       let topItemsData: any[] = [];
       if (shopOrderIds.length > 0) {
         const { data: items } = await supabase
           .from("order_items")
           .select("product_name, quantity, line_total")
           .in("order_id", shopOrderIds)
-          .limit(500);
+          .limit(300);
         topItemsData = items || [];
       }
 
-      // Calculate time boundaries in JS using numeric timestamps
       const todayTime = new Date(today).getTime();
       const weekTime = new Date(weekStart).getTime();
       const monthTime = new Date(monthStart).getTime();
@@ -211,7 +231,6 @@ export function useDashboardStats() {
         }
       }
 
-      // Total all-time
       const totalOrders = totalOrdersRes.count || thirtyDaysRecords.length;
 
       // Build daily revenue chart data for last 30 days
@@ -247,18 +266,12 @@ export function useDashboardStats() {
         statusMap.entries()
       ).map(([status, count]) => ({ status, count }));
 
-      // Top items aggregation (isolated to shop)
-      const itemMap = new Map<
-        string,
-        { quantity: number; revenue: number }
-      >();
+      // Top items aggregation
+      const itemMap = new Map<string, { quantity: number; revenue: number }>();
       topItemsData.forEach((item: any) => {
         const itemName = item.product_name || item.name || "Item";
         const itemRevenue = Number(item.line_total ?? item.total ?? 0);
-        const existing = itemMap.get(itemName) || {
-          quantity: 0,
-          revenue: 0,
-        };
+        const existing = itemMap.get(itemName) || { quantity: 0, revenue: 0 };
         existing.quantity += Number(item.quantity) || 0;
         existing.revenue += itemRevenue;
         itemMap.set(itemName, existing);
@@ -268,14 +281,14 @@ export function useDashboardStats() {
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 8);
 
-      const lowStockCount =
-        lowStockRes.data?.filter(
-          (item: any) =>
-            item.quantity !== null &&
-            (item.quantity <= item.min_quantity || item.quantity === 0)
-        ).length || 0;
+      const inventoryItems = inventoryRes.data || [];
+      const lowStockCount = inventoryItems.filter(
+        (item: any) =>
+          item.quantity !== null &&
+          (item.quantity <= item.min_quantity || item.quantity === 0)
+      ).length;
 
-      setStats({
+      const newStats: DashboardStats = {
         todayOrders,
         todayRevenue,
         weekOrders,
@@ -284,7 +297,7 @@ export function useDashboardStats() {
         monthRevenue,
         totalOrders,
         totalRevenue,
-        inventoryCount: inventoryRes.count || 0,
+        inventoryCount: inventoryItems.length,
         lowStockCount,
         employeeCount: employeeRes.count || 0,
         menuItemCount: menuItemRes.count || 0,
@@ -292,17 +305,21 @@ export function useDashboardStats() {
         dailyRevenue,
         ordersByStatus,
         topItems,
-      });
+      };
+
+      globalStatsCache.set(shopId, { stats: newStats, timestamp: Date.now() });
+      setStats(newStats);
     } catch (error) {
       console.error("Error fetching dashboard stats:", error);
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [shop?.id]);
+  }, [shopId]);
 
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
 
-  return { stats, isLoading, refetch: fetchStats };
+  return { stats, isLoading, refetch: () => fetchStats(true) };
 }

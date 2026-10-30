@@ -1,22 +1,16 @@
 "use client";
 
 import { useAuth } from "@/hooks/use-auth";
-import { LoadingScreen } from "@/components/ui/loading";
 
 interface AuthProviderProps {
   children: React.ReactNode;
 }
 
 /**
- * Wraps the app and initializes the Supabase auth session.
- * Shows a branded loading screen while the session is being resolved.
+ * Wraps the app and initializes the Supabase auth session in the background.
+ * Does not block initial page rendering, ensuring instant FCP/LCP for all routes.
  */
 export function AuthProvider({ children }: AuthProviderProps) {
-  const { isLoading } = useAuth();
-
-  if (isLoading) {
-    return <LoadingScreen message="Preparing your workspace..." />;
-  }
-
+  useAuth();
   return <>{children}</>;
 }

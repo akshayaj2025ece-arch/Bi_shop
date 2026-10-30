@@ -4,13 +4,21 @@ const nextConfig: NextConfig = {
   // Do not use "standalone" on Vercel; Vercel handles serverless function packaging natively.
   // Using "standalone" on Vercel causes ENOENT: no such file or directory, open '.next/next-server.js.nft.json'
   output: process.env.VERCEL ? undefined : "standalone",
-  /* ── Package Import Optimization for Lucide & Framer Motion ── */
+
+  /* ── Package Import Optimization for Lucide, Charts & Framer Motion ── */
   experimental: {
-    optimizePackageImports: ["lucide-react", "framer-motion", "chart.js", "react-chartjs-2"],
+    optimizePackageImports: [
+      "lucide-react",
+      "framer-motion",
+      "chart.js",
+      "react-chartjs-2",
+      "sonner",
+    ],
   },
 
-  /* ── Image Optimization ── */
+  /* ── Modern Image Optimization (AVIF + WebP) ── */
   images: {
+    formats: ["image/avif", "image/webp"],
     remotePatterns: [
       {
         protocol: "https",
@@ -20,7 +28,7 @@ const nextConfig: NextConfig = {
     ],
   },
 
-  /* ── Headers for Security ── */
+  /* ── Security & Aggressive Static Caching Headers ── */
   async headers() {
     return [
       {
@@ -37,6 +45,24 @@ const nextConfig: NextConfig = {
           {
             key: "Referrer-Policy",
             value: "strict-origin-when-cross-origin",
+          },
+        ],
+      },
+      {
+        source: "/hero/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/:path*.(svg|jpg|jpeg|png|webp|avif|ico|woff|woff2)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
           },
         ],
       },

@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/dashboard/stat-card";
-import { RevenueChart, OrdersChart } from "@/components/charts/charts";
+import dynamic from "next/dynamic";
 import { LoadingSpinner } from "@/components/ui/loading";
 import { useAuthStore } from "@/stores/auth-store";
 import { useDashboardStats } from "@/hooks/use-dashboard-stats";
@@ -32,7 +32,45 @@ import {
   Store,
 } from "lucide-react";
 import Link from "next/link";
-import { MultiShopDashboard } from "@/components/dashboard/multi-shop-dashboard";
+
+// Lazy-load heavy Chart.js modules and MultiShop dashboard to unblock critical rendering path
+const RevenueChart = dynamic(
+  () => import("@/components/charts/charts").then((mod) => mod.RevenueChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[340px] bg-white rounded-2xl border border-slate-100 p-6 flex flex-col justify-between animate-pulse">
+        <div className="h-4 w-32 bg-slate-200 rounded" />
+        <div className="h-48 w-full bg-slate-50 rounded-xl" />
+      </div>
+    ),
+  }
+);
+
+const OrdersChart = dynamic(
+  () => import("@/components/charts/charts").then((mod) => mod.OrdersChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[340px] bg-white rounded-2xl border border-slate-100 p-6 flex flex-col justify-between animate-pulse">
+        <div className="h-4 w-32 bg-slate-200 rounded" />
+        <div className="h-48 w-full bg-slate-50 rounded-xl" />
+      </div>
+    ),
+  }
+);
+
+const MultiShopDashboard = dynamic(
+  () => import("@/components/dashboard/multi-shop-dashboard").then((mod) => mod.MultiShopDashboard),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="py-20 flex justify-center">
+        <LoadingSpinner size="lg" />
+      </div>
+    ),
+  }
+);
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/stores/auth-store";
 import type { Profile, Shop, UserRole } from "@/lib/types";
@@ -12,46 +12,41 @@ function getActiveShopStorageKey(userId?: string | null): string {
 }
 
 /**
- * Hook that initializes and manages the auth session.
- * Listens for Supabase auth state changes and syncs the user profile + shop.
+ * Hook that initializes and manages the auth session in the background.
+ * Uses SWR hydration from local storage so UI renders in 0ms without full-page spinners.
  */
 export function useAuth() {
   const { user, shop, shops, isLoading, setUser, setShop, setShops, setIsAllShops, setLoading, reset } =
     useAuthStore();
 
+  const activeUserIdRef = useRef<string | null>(null);
+  const currentRequestIdRef = useRef(0);
+
   useEffect(() => {
     const supabase = createClient();
 
-    let activeUserId: string | null = null;
-    let currentRequestId = 0;
+    // Fetch user profile and shop data in background without tearing down existing UI
+    async function loadUserData(authenticatedUser: any) {
+      if (!authenticatedUser?.id) {
+        setLoading(false);
+        return;
+      }
 
-    // Fetch user profile and shop data
-    async function loadUserData(userId: string) {
-      if (activeUserId === userId) return;
+      // If user ID changed, reset state for clean account boundary
+      if (activeUserIdRef.current && activeUserIdRef.current !== authenticatedUser.id) {
+        reset();
+      }
 
-      // When switching accounts or loading a new account:
-      // Immediately reset previous state and set loading to prevent displaying stale data
-      reset();
-      setLoading(true);
+      // If already fully loaded for this user, do a lightweight background revalidation without setting loading
+      const isInitialUserLoad = activeUserIdRef.current !== authenticatedUser.id;
+      if (isInitialUserLoad) {
+        activeUserIdRef.current = authenticatedUser.id;
+      }
 
-      activeUserId = userId;
-      const requestId = ++currentRequestId;
+      const requestId = ++currentRequestIdRef.current;
 
       try {
-        // Obtain and verify authenticated user session directly
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData?.user || authData.user.id !== userId) {
-          if (requestId === currentRequestId) {
-            activeUserId = null;
-            reset();
-            setLoading(false);
-          }
-          return;
-        }
-
-        const authenticatedUser = authData.user;
-
-        // Fetch profile and all potential owned shops strictly using verified user ID
+        // Fetch profile and owned shops in parallel using verified user ID
         const [profileRes, ownedShopsRes] = await Promise.all([
           supabase.from("profiles").select("*").eq("id", authenticatedUser.id).maybeSingle(),
           supabase
@@ -61,8 +56,7 @@ export function useAuth() {
             .order("created_at", { ascending: true }),
         ]);
 
-        // Discard result if user changed or another request started in the meantime
-        if (requestId !== currentRequestId || activeUserId !== authenticatedUser.id) {
+        if (requestId !== currentRequestIdRef.current || activeUserIdRef.current !== authenticatedUser.id) {
           return;
         }
 
@@ -70,10 +64,6 @@ export function useAuth() {
         const ownedShops = (ownedShopsRes.data as Shop[]) || [];
         const isEmployee = profile?.role === "employee";
 
-        // Determine effective verified role:
-        // - Employees strictly retain "employee" role and are never granted shopkeeper access.
-        // - Users with genuine registered owned shops in the database are verified "shopkeeper".
-        // - Otherwise fallback to existing profile.role or "customer".
         const effectiveRole: UserRole = isEmployee
           ? "employee"
           : ownedShops.length > 0
@@ -88,8 +78,6 @@ export function useAuth() {
         }
 
         if (isEmployee) {
-          // Employee: strictly restricted to their assigned shop (profile.shop_id).
-          // Cannot own or access multi-shop analytics.
           setIsAllShops(false);
           if (profile?.shop_id) {
             const { data: employeeShopData } = await supabase
@@ -98,7 +86,7 @@ export function useAuth() {
               .eq("id", profile.shop_id)
               .maybeSingle();
 
-            if (requestId !== currentRequestId || activeUserId !== authenticatedUser.id) return;
+            if (requestId !== currentRequestIdRef.current || activeUserIdRef.current !== authenticatedUser.id) return;
 
             if (employeeShopData) {
               const employeeShop = employeeShopData as Shop;
@@ -122,17 +110,14 @@ export function useAuth() {
             setShop(null);
           }
         } else if (ownedShops.length > 0) {
-          // User is a shopkeeper who owns one or more registered shops
           setShops(ownedShops);
 
-          // Reconcile active shop selection strictly scoped to authenticated user ID
           const userStorageKey = getActiveShopStorageKey(authenticatedUser.id);
           let savedShopId: string | null = null;
           if (typeof window !== "undefined") {
             try {
               savedShopId = localStorage.getItem(userStorageKey);
               if (!savedShopId) {
-                // Fallback to legacy global key if user-specific key not yet set
                 savedShopId = localStorage.getItem(ACTIVE_SHOP_STORAGE_KEY_LEGACY);
               }
             } catch {
@@ -143,7 +128,6 @@ export function useAuth() {
           let activeShop: Shop | null = null;
 
           if (ownedShops.length > 1) {
-            // Multi-shop account: default to All Shops if no valid individual shop is saved
             if (!savedShopId || savedShopId === "all") {
               setIsAllShops(true);
               activeShop = ownedShops[0];
@@ -181,7 +165,6 @@ export function useAuth() {
               }
             }
           } else {
-            // Single-shop account: always individual shop
             setIsAllShops(false);
             activeShop = ownedShops[0];
             if (typeof window !== "undefined") {
@@ -196,8 +179,6 @@ export function useAuth() {
 
           setShop(activeShop);
 
-          // Preserve existing behavior for single-shop accounts:
-          // auto-heal missing profile linkage if needed
           if (
             ownedShops.length === 1 &&
             profile &&
@@ -210,7 +191,6 @@ export function useAuth() {
               .eq("id", profile.id)
               .then();
           } else if (!profile) {
-            // If profile is entirely missing but they own a shop, auto-create it
             const fallbackProfile: Profile = {
               id: authenticatedUser.id,
               email: authenticatedUser.email || "",
@@ -221,32 +201,31 @@ export function useAuth() {
               updated_at: new Date().toISOString(),
             };
             await supabase.from("profiles").upsert(fallbackProfile);
-            if (requestId === currentRequestId && activeUserId === authenticatedUser.id) {
+            if (requestId === currentRequestIdRef.current && activeUserIdRef.current === authenticatedUser.id) {
               setUser(fallbackProfile);
             }
           }
         } else {
-          // User with zero registered shops
           setIsAllShops(false);
           setShops([]);
           setShop(null);
         }
       } catch (error) {
         console.error("Error loading user data:", error);
-        if (requestId === currentRequestId) {
-          activeUserId = null;
+        if (requestId === currentRequestIdRef.current) {
+          activeUserIdRef.current = null;
         }
       } finally {
-        if (requestId === currentRequestId) {
+        if (requestId === currentRequestIdRef.current) {
           setLoading(false);
         }
       }
     }
 
-    // Check initial session
+    // Single unified initial session check — avoids duplicate getUser() waterfall
     supabase.auth.getUser().then(({ data }: any) => {
       if (data?.user) {
-        loadUserData(data.user.id);
+        loadUserData(data.user);
       } else {
         setLoading(false);
       }
@@ -257,10 +236,10 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       if (session?.user) {
-        loadUserData(session.user.id);
+        loadUserData(session.user);
       } else {
-        activeUserId = null;
-        currentRequestId++;
+        activeUserIdRef.current = null;
+        currentRequestIdRef.current++;
         reset();
       }
     });

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import MenuCustomerPage from "./MenuCustomerPage";
 import type { Category, MenuItem, Shop } from "@/lib/types";
@@ -10,45 +11,9 @@ interface PageProps {
   params: Promise<{ slug: string }>;
 }
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { slug } = await params;
+// Deduplicate shop queries between metadata generation and page render
+const getCachedMenuShop = cache(async (decodedSlug: string) => {
   const supabase = await createClient();
-  const decodedSlug = decodeURIComponent(slug);
-  
-  let { data: shop } = await supabase
-    .from("shops")
-    .select("id, name, shop_name")
-    .eq("id", decodedSlug)
-    .maybeSingle();
-
-  if (!shop) {
-    const { data: fallbackShop } = await supabase
-      .from("shops")
-      .select("id, name, shop_name")
-      .eq("slug", decodedSlug)
-      .maybeSingle();
-    shop = fallbackShop;
-  }
-
-  const shopName = shop?.name || shop?.shop_name || "Shop";
-
-  if (!shop) {
-    return {
-      title: "Menu Not Found | BISHOP",
-    };
-  }
-
-  return {
-    title: `${shopName} Digital Menu | BISHOP`,
-    description: `Browse the ${shopName} menu and place an order directly from your phone.`,
-  };
-}
-
-export default async function MenuPage({ params }: PageProps) {
-  const { slug } = await params;
-  const supabase = await createClient();
-  const decodedSlug = decodeURIComponent(slug);
-
   let { data: shop } = await supabase
     .from("shops")
     .select("*")
@@ -64,11 +29,38 @@ export default async function MenuPage({ params }: PageProps) {
       .maybeSingle();
     shop = fallbackShop;
   }
+  return shop as Shop | null;
+});
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { slug } = await params;
+  const decodedSlug = decodeURIComponent(slug);
+  const shop = await getCachedMenuShop(decodedSlug);
+
+  const shopName = shop?.name || (shop as any)?.shop_name || "Shop";
+
+  if (!shop) {
+    return {
+      title: "Menu Not Found | BISHOP",
+    };
+  }
+
+  return {
+    title: `${shopName} Digital Menu | BISHOP`,
+    description: `Browse the ${shopName} menu and place an order directly from your phone.`,
+  };
+}
+
+export default async function MenuPage({ params }: PageProps) {
+  const { slug } = await params;
+  const decodedSlug = decodeURIComponent(slug);
+  const shop = await getCachedMenuShop(decodedSlug);
 
   if (!shop) {
     notFound();
   }
 
+  const supabase = await createClient();
   const [categoriesRes, itemsRes, inventoryRes] = await Promise.all([
     supabase
       .from("categories")
